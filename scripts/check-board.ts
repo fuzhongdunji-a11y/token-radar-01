@@ -1,0 +1,30 @@
+// Verifies board.json invariants: node scripts/check-board.ts <outdir> <snapshot.json>
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+const [dir, snapPath] = process.argv.slice(2);
+const rows = JSON.parse(readFileSync(join(dir!, 'board.json'), 'utf8')).rows;
+const snap = JSON.parse(readFileSync(snapPath!, 'utf8'));
+const checks: [string, boolean][] = [];
+const N = rows.length;
+const watch = new Set(snap.watchlist);
+checks.push(['rows in 100..4000', N >= 100 && N <= 4000]);
+checks.push(['rows == watchlist + extras', rows.filter((r: any) => !watch.has(r.slug)).length === N - snap.watchlist.length]);
+const ranks = rows.map((r: any) => r.rank).sort((a: number, b: number) => a - b);
+checks.push([`ranks 1..${N} once each`, ranks.every((r: number, i: number) => r === i + 1)]);
+const byRank = [...rows].sort((a: any, b: any) => a.rank - b.rank);
+checks.push(['implied non-increasing by rank', byRank.every((r: any, i: number) => i === 0 || r.implied_value_usd <= byRank[i - 1].implied_value_usd)]);
+checks.push(['implied positive integers', rows.every((r: any) => Number.isInteger(r.implied_value_usd) && r.implied_value_usd > 0 && r.implied_value_usd <= 1e14)]);
+checks.push(['implied not all equal', new Set(rows.map((r: any) => r.implied_value_usd)).size > 1]);
+const slugs = new Set(rows.map((r: any) => r.slug));
+checks.push(['slugs unique', slugs.size === rows.length]);
+checks.push([`watchlist ${snap.watchlist.length} covered`, snap.watchlist.every((s: string) => slugs.has(s))]);
+const known = new Set(snap.protocols.map((p: any) => p.slug));
+checks.push(['all slugs in snapshot', rows.every((r: any) => known.has(r.slug))]);
+checks.push(['no live-token rows', rows.every((r: any) => r.mcap_usd === null)]);
+checks.push(['farm_steps 3..12 each, 20..600 chars', rows.every((r: any) => r.farm_steps.length >= 3 && r.farm_steps.length <= 12 && r.farm_steps.every((s: string) => s.trim().length >= 20 && s.trim().length <= 600))]);
+checks.push(['every step has Cost: and Time:', rows.every((r: any) => r.farm_steps.every((s: string) => s.includes('Cost:') && s.includes('Time:')))]);
+let bad = 0;
+for (const [n, ok] of checks) { console.log(`${ok ? 'PASS' : 'FAIL'}  ${n}`); if (!ok) bad++; }
+const lens = rows.flatMap((r: any) => r.farm_steps.map((s: string) => s.trim().length));
+console.log(`step length min ${Math.min(...lens)} max ${Math.max(...lens)}; steps/row ${rows[0].farm_steps.length}`);
+process.exit(bad ? 1 : 0);

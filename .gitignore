@@ -1,0 +1,18 @@
+# verification / scratch output
+out*/
+/tmp/
+*.tmp
+*.log
+.DS_Store
+node_modules/
+
+# secrets and wallets: never commit
+wallet*.json
+*keypair*
+*.pem
+*.key
+.env
+.env.*
+transcripts*
+*.tar.gz
+.claude/
