@@ -44,4 +44,10 @@ mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../kit/token-radar-0
 ```
 
 ## 現段階のスコープ
-- 環境確認・キット理解・前提ファイル作成のみ完了。model / dashboard の実装、GitHub リポジトリ作成、キーペア作成、サインイン、提出はまだ行っていない。
+- v2 まで実装済み（価値モデル・dashboard・farm plan 深化）。GitHub リポジトリ作成済み。make.fun への提出・bundle 作成は未実施（ユーザー側で対応）。
+
+## v2 改善（farm plan 深化・ダッシュボード強化）
+- 価値モデル（式・倍率・順位・適格条件・行数191）は不変。変更は `farmPlan` と dashboard のみ。
+- farm plan: 7ステップ維持、各ステップ **300〜450字**（実測 min 300 / 中央値 402 / max 449、上限600は余裕あり）。カテゴリ別 kit（curator / dex / lend / yield / stake / bridge / deriv / cdp / rwa / generic）で行動と文型を変える。TVL帯→資本額と配分、age帯→保有日数、7日成長の符号と大きさ→TVLチェック間隔（-10%以下: 2日、マイナス: 3日、+10%以上: 3日、他: 週1）。全ステップに Cost / Time、最終ステップに出口条件（トークン・スナップショット告知の監視、保有期間+30日で告知が無ければ停止）。APY・プログラム名・アドレスは書かない。
+- dashboard: 詳細ビューに TVL→カテゴリ倍率→growth→maturity→chain→implied の横バー積み上げ（各倍率併記）。モデル画面に全カテゴリの倍率テーブル（n・生の中央値・shrinkage 後の倍率、data.js の `categories` を描画）。ソース合計は **62,000 bytes 以下**を維持（現在 32,087）。
+- スクショは repo 直下 `screenshots/` に置く（main.ts が copy）。撮影: playwright-core（リポジトリ外 `tools/shot`）+ `tools/chrome-x` の Chrome、1440×1080。

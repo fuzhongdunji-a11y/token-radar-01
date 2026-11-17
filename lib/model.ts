@@ -110,53 +110,141 @@ export function isExtraEligible(p: Protocol, brands: Set<string>) {
 }
 
 // ---- farm plan ----
-type Kit = { act: string; ask: string; verb: string };
-const KITS: Record<string, Kit> = {
-  dex: { act: 'swap and provide liquidity', ask: 'a stable pair LP position', verb: 'swaps' },
-  lend: { act: 'supply and borrow', ask: 'a supply position with a small borrow', verb: 'loan actions' },
-  yield: { act: 'deposit into a vault', ask: 'a single vault deposit', verb: 'vault actions' },
-  stake: { act: 'stake or restake', ask: 'a staking deposit', verb: 'stake actions' },
-  bridge: { act: 'bridge assets', ask: 'a round-trip bridge transfer', verb: 'bridge transfers' },
-  deriv: { act: 'trade a small perp or option position', ask: 'a low-leverage position', verb: 'trades' },
-  cdp: { act: 'mint the stablecoin against collateral', ask: 'an over-collateralised mint', verb: 'mint and repay cycles' },
-  rwa: { act: 'subscribe to a tokenised asset', ask: 'a small primary subscription', verb: 'subscriptions' },
-  generic: { act: 'use the core product', ask: 'a small deposit', verb: 'core actions' },
-};
+// Seven steps per row. Wording depends on the category kit (what the wallet actually does) and on bands derived from
+// snapshot numbers only: TVL band -> capital, listing age -> hold period, 7-day TVL change -> monitoring cadence.
+// No APYs, program names or addresses are asserted; every Cost / Time figure is an estimate from the band rules.
+interface Ctx {
+  p: Protocol; name: string; cat: string; chain: string; more: string; tvl: string; trend: string; age: string; implied: string;
+  cap: number; slice: number; half: number; rest: number; gas: number; hold: number; every: number; checks: number; round: number; floorTvl: string; pace: string;
+}
+interface Kit { key: string; read: string; asset: string; steps: [(c: Ctx) => string, (c: Ctx) => string, (c: Ctx) => string]; points: string }
+const g = (n: number) => n.toFixed(2);
+const KITS: Kit[] = [
+  { key: 'curator', read: 'the curator list, which vaults each curator allocates to and the fee each one takes', asset: 'a stablecoin the vaults accept',
+    points: 'the points or rewards page for curator vault depositors',
+    steps: [
+      (c) => `Pick one curator vault on ${c.name} and deposit $${c.slice} of your stable balance. Before signing, read which markets the curator allocates into and which collateral sits behind them, then confirm that the deposit shows in the points counter within a day. Cost: about $${g(c.gas * 0.4)} gas, no entry fee expected. Time: 25 min plus a 10 min points check the next day.`,
+      (c) => `Split the remaining deposit on ${c.name}: put $${c.half} into a second curator vault with a different risk profile, so the wallet is seen to compare curators rather than sit in one. Withdraw $${Math.max(5, Math.round(c.half / 4))} and redeposit it to test the exit path. Cost: about $${g(c.gas * 0.6)} gas across three transactions. Time: 20 min.`,
+      (c) => `Every 7 days for 3 weeks, top up one vault by $${c.round} or less and note the vault share price and the points total. If a curator changes its allocation, log it. This builds a steady deposit history without a single large burst. Cost: about $${g(c.gas * 1.2)} gas over the rounds. Time: 10 min per round, 3 weeks.`,
+    ] },
+  { key: 'dex', read: 'the pool list, fee tiers and the volume to TVL ratio of the deepest stable pair', asset: 'two stablecoins for a stable pair, or the pair the pool needs',
+    points: 'the liquidity or trading points page',
+    steps: [
+      (c) => `Provide liquidity on ${c.name}: open one stable-pair pool and add $${c.slice} split evenly between the two sides. Preview the price impact before signing, keep slippage under 0.5%, and check that the position shows up on the pool page. Cost: about $${g(c.gas * 0.5)} gas, the pool fee is earned rather than paid. Time: 20 min.`,
+      (c) => `Trade on ${c.name} as a user too: do three swaps of about $${Math.max(5, Math.round(c.half / 3))} each through different routes, then add $${c.half} to a second pool. Swap volume and liquidity are the two signals a DEX can count, so cover both. Cost: swap fees near 0.3% of volume plus about $${g(c.gas * 0.8)} gas. Time: 25 min.`,
+      (c) => `Each week for 3 weeks, rebalance the LP position on ${c.name} and make one swap of $${c.round}. Read the position's accrued fees and the pool's volume, and widen or narrow the range only if the price drifts out of it. Cost: about $${g(c.gas * 1.2)} gas in total. Time: 10 min per round, 3 weeks.`,
+    ] },
+  { key: 'lend', read: 'the markets, loan-to-value limits, borrow caps and the liquidation penalty', asset: 'a stablecoin plus a blue-chip collateral asset',
+    points: 'the lender and borrower points or rewards page',
+    steps: [
+      (c) => `Supply $${c.slice} to the deepest stablecoin market on ${c.name}. Check the market's utilisation and the supply cap, and enable it as collateral only if you plan to borrow. Cost: about $${g(c.gas * 0.4)} gas, no supply fee. Time: 15 min.`,
+      (c) => `Borrow a small amount against the supply on ${c.name}: $${Math.max(5, Math.round(c.half * 0.4))} at most, which keeps loan-to-value under 30% of the allowed limit, then repay it two days later. Borrowing and repaying are separate on-chain actions, so keep spare borrow capacity of at least 70%. Cost: about $${g(c.gas * 0.8)} gas plus a few cents of interest. Time: 20 min, over 2 days.`,
+      (c) => `Once a week for 3 weeks, top up supply by $${c.round} and check the health factor, the borrow capacity left and utilisation on ${c.name}. If the factor falls near the liquidation line, repay first. Cost: about $${g(c.gas * 1.2)} gas in total. Time: 10 min per round, 3 weeks.`,
+    ] },
+  { key: 'yield', read: 'the vault list, the strategy behind each vault, withdrawal terms and any lock-up', asset: 'the single asset the chosen vault takes',
+    points: 'the depositor points or rewards page',
+    steps: [
+      (c) => `Stake $${c.slice} in the main vault on ${c.name} and read the strategy description first: which assets it holds and how it compounds. Note the share price at entry so later growth can be measured, and confirm that withdrawals carry no lock-up you did not expect. Cost: about $${g(c.gas * 0.4)} gas. Time: 20 min.`,
+      (c) => `Add a second vault on ${c.name} with $${c.half}, and compound once by claiming and redepositing whatever the vault pays out. Compounding is the action a yield protocol most plainly wants repeated, so do it by hand at least once. Cost: about $${g(c.gas * 0.6)} gas. Time: 20 min.`,
+      (c) => `Every 7 days for 3 weeks, compound and add $${c.round} on ${c.name}. Log the share price after each round, so you can see actual growth rather than a quoted figure, and stop adding if it falls. Cost: about $${g(c.gas * 1.2)} gas. Time: 10 min per round, 3 weeks.`,
+    ] },
+  { key: 'stake', read: 'the staking or restaking options, unbonding time and slashing terms', asset: 'the staking asset, bought in the smallest sensible lot',
+    points: 'the staker points or airdrop checker page',
+    steps: [
+      (c) => `Stake $${c.slice} on ${c.name} and read the unbonding period and slashing terms before signing. If a liquid receipt token is issued, check where it can be redeemed. Cost: about $${g(c.gas * 0.5)} gas, an exit queue may apply. Time: 20 min.`,
+      (c) => `Delegate or restake a second amount of $${c.half} on ${c.name}, to a different operator if the product offers a choice, then unstake $${Math.max(5, Math.round(c.half / 4))} to test the queue. A staking wallet should show both entry and exit. Cost: about $${g(c.gas * 0.8)} gas. Time: 25 min.`,
+      (c) => `Weekly for 3 weeks, claim rewards if any and add $${c.round} or less on ${c.name}. Check the operator's uptime and whether any slashing event is reported. Cost: about $${g(c.gas * 1.2)} gas in total. Time: 10 min per round, 3 weeks.`,
+    ] },
+  { key: 'bridge', read: 'the supported routes, the fee table and the time each route takes', asset: 'the asset you will move, on the source chain',
+    points: 'the bridge points or volume tracker',
+    steps: [
+      (c) => `Bridge $${c.slice} out through ${c.name} to a second chain and back. Check the quoted fee and the arrival time before confirming, and keep the receipt of each leg. Cost: about $${g(c.gas)} gas plus the route fee. Time: 30 min.`,
+      (c) => `Use a second route on ${c.name} with $${c.half}, a different pair of chains if the product offers one, so the wallet is not limited to a single path. Cost: about $${g(c.gas * 0.8)} gas plus fees. Time: 30 min.`,
+      (c) => `Once a week for 3 weeks, send one round-trip of $${c.round} or less through ${c.name}. Compare the quote against the amount received each time. Cost: about $${g(c.gas * 1.2)} gas plus fees. Time: 10 min per round, 3 weeks.`,
+    ] },
+  { key: 'deriv', read: 'the markets, the margin model, the fee schedule and the liquidation rules', asset: 'the margin asset the venue accepts',
+    points: 'the trader points or rewards page',
+    steps: [
+      (c) => `Deposit $${c.slice} as margin on ${c.name} and open one low-leverage position, 2x at most, sized under $${Math.max(10, Math.round(c.slice / 2))}. Confirm the liquidation price before signing and set it far from market. Cost: about $${g(c.gas * 0.5)} gas plus trading fees, which can be a few cents. Time: 20 min.`,
+      (c) => `Close the first position on ${c.name} and open a second in a different market with $${c.half} of margin, so the history spans more than one market. Cost: about $${g(c.gas * 0.8)} gas plus fees. Time: 20 min.`,
+      (c) => `Weekly for 3 weeks, open and close one small position of $${c.round} or less on ${c.name}. Never add leverage and never hold through a large move. Cost: about $${g(c.gas * 1.2)} gas plus fees. Time: 10 min per round, 3 weeks.`,
+    ] },
+  { key: 'cdp', read: 'the collateral types, the stability fee, the minimum debt and the liquidation ratio', asset: 'the collateral asset the vault accepts',
+    points: 'the minter or holder points page',
+    steps: [
+      (c) => `Open a vault on ${c.name} and deposit $${c.slice} of collateral, then mint only a little of the stablecoin, no more than a third of the safe limit. Read the liquidation ratio and the minimum debt first. Cost: about $${g(c.gas * 0.6)} gas plus any stability fee. Time: 25 min.`,
+      (c) => `Repay part of the debt on ${c.name} and add $${c.half} of collateral, which moves the vault further from the liquidation line. Try minting again after that. Cost: about $${g(c.gas * 0.8)} gas. Time: 20 min.`,
+      (c) => `Once a week for 3 weeks, mint and repay a cycle of $${c.round} or less on ${c.name}, and check the collateral ratio each time. If the collateral price falls toward the liquidation line, add collateral or repay. Cost: about $${g(c.gas * 1.2)} gas. Time: 10 min per round, 3 weeks.`,
+    ] },
+  { key: 'rwa', read: 'the eligibility rules, the identity check, the minimum subscription and redemption terms', asset: 'the currency the product accepts for subscription',
+    points: 'the investor points or rewards page',
+    steps: [
+      (c) => `Complete the identity check that ${c.name} requires, if it applies in your region, then subscribe $${c.slice}, or the stated minimum if that is higher. Read the redemption window first, since tokenised assets often settle in days, not minutes. Cost: about $${g(c.gas * 0.4)} gas plus any subscription fee. Time: 40 min including the check.`,
+      (c) => `Add a second subscription of $${c.half} on ${c.name}, in a different product if one exists, and check that the balance and the accrual of income show in the app. Cost: about $${g(c.gas * 0.6)} gas. Time: 20 min.`,
+      (c) => `Every week for 3 weeks, add $${c.round} or less on ${c.name} and check the redemption terms. Test one small redemption, so that you know the exit works. Cost: about $${g(c.gas * 1.2)} gas plus fees. Time: 10 min per round, 3 weeks.`,
+    ] },
+  { key: 'generic', read: 'the product pages, the main user flow and the fee table', asset: 'a stablecoin, as the first deposit',
+    points: 'the rewards or points page, if the app has one',
+    steps: [
+      (c) => `Use the core product of ${c.name} once with $${c.slice}: complete its main user flow from start to finish, and keep the transaction link. Read the fee table before signing. Cost: about $${g(c.gas * 0.4)} gas plus fees. Time: 20 min.`,
+      (c) => `Do a second, different action on ${c.name} with $${c.half}, for example a withdrawal followed by a new deposit, so the wallet shows more than one kind of use. Cost: about $${g(c.gas * 0.6)} gas. Time: 20 min.`,
+      (c) => `Weekly for 3 weeks, repeat the main flow on ${c.name} with $${c.round} or less. A steady record is worth more than one burst. Cost: about $${g(c.gas * 1.2)} gas. Time: 10 min per round, 3 weeks.`,
+    ] },
+];
 function kitFor(category: string | null): Kit {
   const c = (category ?? '').toLowerCase();
-  if (/dex|liquidity|amm|farm|launchpad/.test(c)) return KITS.dex!;
-  if (/lend|credit|collateral|allocator|curator/.test(c)) return KITS.lend!;
-  if (/yield|vault|basis|index|aggregator|cedefi/.test(c)) return KITS.yield!;
-  if (/stak|restak|chain/.test(c)) return KITS.stake!;
-  if (/bridge/.test(c)) return KITS.bridge!;
-  if (/deriv|option|perp|synthetic|prediction|rate/.test(c)) return KITS.deriv!;
-  if (/cdp|stable|algo|reserve/.test(c)) return KITS.cdp!;
-  if (/rwa|real|asset|payment|card/.test(c)) return KITS.rwa!;
-  return KITS.generic!;
+  const by = (k: string) => KITS.find((x) => x.key === k)!;
+  if (/curator|allocator/.test(c)) return by('curator');
+  if (/dex|liquidity|amm|farm|launchpad/.test(c)) return by('dex');
+  if (/lend|credit|collateral/.test(c)) return by('lend');
+  if (/yield|vault|basis|index|aggregator|cedefi/.test(c)) return by('yield');
+  if (/stak|restak|chain/.test(c)) return by('stake');
+  if (/bridge/.test(c)) return by('bridge');
+  if (/deriv|option|perp|synthetic|prediction|rate/.test(c)) return by('deriv');
+  if (/cdp|stable|algo|reserve/.test(c)) return by('cdp');
+  if (/rwa|real|asset|payment|card/.test(c)) return by('rwa');
+  return by('generic');
 }
 export function capitalFor(tvl: number): number { return tvl < 25e6 ? 50 : tvl < 100e6 ? 100 : tvl < 500e6 ? 150 : 250; }
 export function holdDaysFor(age: number | null): number { const a = age ?? MODEL.unknown_age_days; return a < 90 ? 14 : a < 365 ? 30 : a < 1095 ? 45 : 60; }
+/** Days between TVL checks from the sign and size of the 7-day change: falling TVL is watched closest. */
+export function checkEveryFor(change: number | null): number { return change === null ? 7 : change <= -10 ? 2 : change < 0 ? 3 : change >= 10 ? 3 : 7; }
 const fmtM = (n: number) => (n >= 1e9 ? `$${(n / 1e9).toFixed(2)}B` : `$${(n / 1e6).toFixed(1)}M`);
+const tvlBand = (tvl: number) => (tvl < 25e6 ? 'small (under $25M)' : tvl < 100e6 ? 'mid-size ($25M to $100M)' : tvl < 500e6 ? 'large ($100M to $500M)' : 'very large (over $500M)');
+const ageBand = (a: number | null) => (a === null ? 'unknown age' : a < 90 ? 'new (under 90 days)' : a < 365 ? 'young (under a year)' : a < 1095 ? 'established (under 3 years)' : 'mature (3 years or more)');
 
 export function farmPlan(p: Protocol, f: Factors, implied: number): string[] {
   const kit = kitFor(p.category);
   const chain = p.chains[0] ?? 'its main chain';
-  const cap = capitalFor(p.tvl_usd), hold = holdDaysFor(f.age_days);
+  const cap = capitalFor(p.tvl_usd), hold = holdDaysFor(f.age_days), every = checkEveryFor(p.change_7d);
   const gas = chain === 'Ethereum' ? 12 : 2;
-  const slice = Math.round(cap * 0.4), reserve = cap - slice;
-  const trend = p.change_7d === null ? 'no 7-day TVL reading' : `TVL ${p.change_7d >= 0 ? '+' : ''}${p.change_7d.toFixed(1)}% over 7 days`;
-  const ageTxt = f.age_days === null ? 'unknown listing age' : `${f.age_days} days tracked`;
-  const hold2 = Math.max(7, Math.round(hold / 2));
-  const steps = [
-    `Scope ${p.name} (${p.category ?? 'uncategorised'}): ${fmtM(p.tvl_usd)} TVL on ${chain}, ${trend}, ${ageTxt}. Model value ${fmtM(implied)}. Read the docs and last 20 transactions and confirm the app is live and there is no token yet. Cost: $0. Time: 30 min.`,
-    `Fund a fresh ${chain} wallet with $${cap} of stable capital plus about $${gas} of native gas for ${p.name}. Keep it separate from main funds so activity stays attributable. Cost: $${cap + gas} deployed ($${gas} gas, recoverable principal). Time: 20 min.`,
-    `First action on ${p.name}: ${kit.act} with $${slice} (${kit.ask}). Check the quote before signing and keep slippage under 0.5%. Cost: about $${(gas * 0.4).toFixed(2)} gas plus fees. Time: 15 min.`,
-    `Add a second, different action on ${p.name} using $${reserve - Math.round(reserve / 2)}, such as a withdrawal and re-entry, so the wallet shows more than one kind of ${kit.verb}. Cost: about $${(gas * 0.5).toFixed(2)} gas. Time: 15 min.`,
-    `Repeat ${kit.verb} on ${p.name} weekly: 3 rounds of $${Math.max(5, Math.round(cap * 0.1))} or less, spaced 7 days apart, to build a steady record rather than one burst. Cost: about $${(gas * 1.2).toFixed(2)} gas across the rounds. Time: 10 min per round, 3 weeks.`,
-    `Keep the position open for ${hold} days (the hold for ${f.age_days === null ? 'an unknown-age' : f.age_days + '-day-old'} protocols). Check at day ${hold2} and exit if TVL drops below ${fmtM(p.tvl_usd * 0.6)}. Cost: $0 beyond the opportunity cost of $${cap} locked. Time: 5 min per check, ${hold} days elapsed.`,
-    `Exit ${p.name}: withdraw everything, record the cost basis (about $${Math.round(gas * 3)} gas in total), and screenshot the wallet's history. Watch the protocol's announcements for a points programme or claim page. Cost: about $${gas} gas. Time: 20 min.`,
+  const slice = Math.round(cap * 0.4), reserve = cap - slice, half = Math.round(reserve / 2);
+  const checks = Math.max(1, Math.floor(hold / every));
+  const n = p.chains.length;
+  const ch = p.change_7d;
+  const c: Ctx = {
+    p, name: p.name, cat: p.category ?? 'uncategorised', chain, more: n > 1 ? ` (one of ${n} chains)` : '', tvl: fmtM(p.tvl_usd),
+    trend: ch === null ? 'no 7-day TVL reading' : `TVL ${ch >= 0 ? '+' : ''}${ch.toFixed(1)}% over 7 days`,
+    age: f.age_days === null ? 'unknown listing age' : `${f.age_days} days tracked`, implied: fmtM(implied),
+    cap, slice, half, rest: reserve - half, gas, hold, every, checks, round: Math.max(5, Math.round(cap * 0.1)), floorTvl: fmtM(p.tvl_usd * 0.6),
+    pace: ch === null ? 'weekly, because there is no 7-day reading to react to' : ch <= -10 ? `every ${every} days, because TVL is falling fast` : ch < 0 ? `every ${every} days, because TVL is slipping` : ch >= 10 ? `every ${every} days, because fast inflows can dilute rewards` : 'weekly, because TVL is steady',
+  };
+  const pct = Math.round((slice / cap) * 100);
+  // Each tail has a short and a long form; the long form is used only while the step stays within 450 characters.
+  const tails: [string, string][] = [
+    [` That is ${pct}% of the $${cap} budget for a ${tvlBand(p.tvl_usd)} protocol.`, ` That is ${pct}% of the $${cap} budget for a ${tvlBand(p.tvl_usd)} protocol. Log the link and date of this first action.`],
+    [` The last $${reserve - half} stays untouched for gas and the exit.`, ` The last $${reserve - half} stays untouched for gas and the exit. Log this link beside the first; two distinct actions on ${chain} make the history readable.`],
+    [` With ${c.trend}, ${ch !== null && ch < 0 ? 'keep rounds small' : 'an early dated record beats size'}; stop adding below ${c.floorTvl} TVL.`, ` With ${c.trend}, ${ch !== null && ch < 0 ? 'keep rounds small' : 'an early dated record beats size'}; stop adding below ${c.floorTvl} TVL. Log each round with date and link, 7 days apart.`],
   ];
-  return steps;
+  const stepsA = kit.steps.map((s, i) => { const base = s(c); return base + (base.length + tails[i]![1].length <= 450 ? tails[i]![1] : tails[i]![0]); });
+  const topic = `${c.name} (${c.cat}) on ${chain}${c.more}`;
+  return [
+    `Scope ${topic}: ${c.tvl} TVL in the ${tvlBand(p.tvl_usd)} band, ${c.trend}, ${c.age}, ${ageBand(f.age_days)}. Model value ${c.implied}. Read ${kit.read}, check the last 20 transactions to confirm the app is live, and confirm there is no token yet. Cost: $0. Time: 30 to 45 min.`,
+    `Open a fresh ${chain} wallet that is used only for ${c.name}, and fund it with $${cap} of ${kit.asset}, the ${tvlBand(p.tvl_usd)} band size, plus about $${gas} of native gas. Split it as $${slice} for the first action, $${half} for the second and $${reserve - half} as a reserve. Main funds stay out of it. Cost: $${cap + gas} deployed, of which $${gas} is gas and the rest is recoverable principal. Time: 25 min.`,
+    stepsA[0]!, stepsA[1]!, stepsA[2]!,
+    `Hold the position for ${hold} days, the period for a ${ageBand(f.age_days)} protocol, and check ${c.name} ${c.pace}, ${checks} checks in all. At each check read TVL and ${kit.points}. If TVL drops below ${c.floorTvl} (60% of today's), withdraw early. Cost: $0 beyond the opportunity cost of $${cap} locked for ${hold} days. Time: 5 min per check, about ${checks * 5} min in total over ${hold} days.`,
+    `Exit plan for ${c.name}: after ${hold} days, withdraw everything and record the cost basis, about $${gas * 3} of gas in total. Watch announcements and ${kit.points} for a token, snapshot date or claim page. If a snapshot date is set, stay in until it passes. If nothing is announced by day ${hold + 30}, stop farming ${c.name}. Cost: about $${gas} gas. Time: 20 min, then 10 min per week until day ${hold + 30}.`,
+  ];
 }
 
 // ---- board ----

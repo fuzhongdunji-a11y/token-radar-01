@@ -149,11 +149,20 @@
     var growthNote = r.change_7d === null ? 'no 7d reading, counted as 0%' : '7d change ' + r.change_7d.toFixed(2) + '%' + (clamped ? ', clamped to ' + m.growth_pct + '%' : '') + '; 1 + ' + (m.growth_pct / 100).toFixed(4) + ' × ' + C.growth_weight;
     var ageNote = m.age_days === null ? 'listing date unknown, ' + C.unknown_age_days + ' days assumed' : m.age_days + ' days since listing (as of ' + R.as_of + ')' + (m.age_days > C.maturity_days ? ', capped at ' + C.maturity_days : '');
     var nch = r.chains.length;
+    var st = [['TVL', r.tvl_usd, null]], acc = r.tvl_usd;
+    [['After category multiple', m.category_multiple], ['After growth', m.growth_multiplier], ['After maturity', m.maturity_multiplier], ['After chain', m.chain_multiplier]].forEach(function (z) { acc *= z[1]; st.push([z[0], acc, z[1]]); });
+    st.push(['Implied value', r.implied_value_usd, null]);
+    var top = Math.max.apply(null, st.map(function (z) { return z[1]; }));
+    var stack = st.map(function (z, i) {
+      var w = Math.max(0.5, z[1] / top * 100);
+      return '<div class="st' + (i === st.length - 1 ? ' fin' : '') + '"><span class="sl">' + z[0] + '</span><div class="sb"><i style="width:' + w.toFixed(1) + '%"></i></div><span class="sv">' + usd(z[1]) + '</span><span class="sm">' + (z[2] === null ? '' : x(z[2])) + '</span></div>';
+    }).join('');
     var line = function (op, lbl, small, val, tr) { return '<tr><td class="op">' + op + '</td><td class="lbl"><b>' + lbl + '</b><small>' + small + '</small>' + (tr || '') + '</td><td class="v">' + val + '</td></tr>'; };
     app.innerHTML =
       '<button class="back" id="bk">← Back to board</button>' +
       '<div class="dh">' + badge(r.rank) + '<h2>' + esc(r.name) + '</h2>' + (r.watchlist ? '<span class="tag wl">watchlist</span>' : '<span class="tag">early</span>') + '<span class="tag">pre-token</span>' +
       '<div class="big"><b>' + usd(r.implied_value_usd) + '</b><span>implied value · rank ' + r.rank + ' of ' + rows.length + '</span></div></div>' +
+      '<div class="card"><h3>Implied value build-up · bars scaled to the largest stage</h3><div class="stack">' + stack + '</div></div>' +
       '<div class="grid2"><div>' +
       '<div class="card"><h3>Model breakdown · radar-2</h3><table class="bd"><tbody>' +
       line('', 'TVL', 'DefiLlama snapshot, ' + R.as_of, full(r.tvl_usd)) +
@@ -204,15 +213,15 @@
 
   // ---------- model ----------
   function modelView() {
-    var withPeers = R.categories.filter(function (c) { return c.n > 0; }).sort(function (a, b) { return b.n - a.n || (a.category < b.category ? -1 : 1); }).slice(0, 8);
+    var withPeers = R.categories.slice().sort(function (a, b) { return b.n - a.n || (a.category < b.category ? -1 : 1); });
     app.innerHTML = '<article class="prose">' +
       '<h2>What the board is</h2><p>Each pre-token protocol gets an <b>implied value</b>: what the market might pay for its token, estimated from how already-tokenised protocols trade against their TVL. Every input is a number in the snapshot (TVL, 7-day TVL change, listing date, chains, and the market caps of live-token peers); no protocol is named in the code. It is a screening heuristic for ordering, not a price forecast.</p>' +
       '<div class="formula">implied = round( TVL × category_multiple × growth × maturity × chain )\nclamped to [1, 1e14]; ranked by implied desc, ties by slug asc</div>' +
       '<h2>Category multiple</h2><p>For every live-token protocol with TVL &gt; 0, take mcap / TVL. The raw category value is the <b>median</b> of that ratio within the category. The global median over all live-token protocols is ' + R.global_median.toFixed(4) + '. Thin categories are shrunk toward it:</p>' +
       '<div class="formula">w = n / (n + ' + C.shrink_k + ')                 n = live-token peers in the category\nmultiple = clamp( w × raw_median + (1 − w) × global_median, ' + C.multiple_min.toFixed(2) + ', ' + C.multiple_max.toFixed(2) + ' )</div>' +
-      '<p>With n = 0 the multiple is the global median; n = 5 gives half weight to the category. Categories with the most peers:</p>' +
+      '<p>With n = 0 the multiple is the global median; n = 5 gives half weight to the category. All ' + withPeers.length + ' categories, most peers first:</p><div class="wrap ct">' +
       '<table><thead><tr><th class="plain">Category</th><th class="plain n">peers n</th><th class="plain n">raw median</th><th class="plain n">weight</th><th class="plain n">multiple</th></tr></thead><tbody>' +
-      withPeers.map(function (c) { return '<tr><td>' + esc(c.category) + '</td><td class="n">' + c.n + '</td><td class="n">' + c.raw_median.toFixed(3) + '</td><td class="n">' + c.weight.toFixed(3) + '</td><td class="n">' + c.multiple.toFixed(3) + '</td></tr>'; }).join('') + '</tbody></table>' +
+      withPeers.map(function (c) { return '<tr><td>' + esc(c.category) + '</td><td class="n">' + c.n + '</td><td class="n">' + (c.raw_median === null ? '–' : c.raw_median.toFixed(3)) + '</td><td class="n">' + c.weight.toFixed(3) + '</td><td class="n">' + c.multiple.toFixed(3) + '</td></tr>'; }).join('') + '</tbody></table></div>' +
       '<h2>Growth, maturity, chain</h2>' +
       '<div class="formula">growth   = 1 + clamp(change_7d, ' + C.growth_floor + ', ' + C.growth_cap + ') / 100 × ' + C.growth_weight + '      (null change counts as 0)\nmaturity = ' + C.maturity_floor + ' + ' + C.maturity_range + ' × min(age_days, ' + C.maturity_days + ') / ' + C.maturity_days + '   (age from listed_at to as_of; unknown = ' + C.unknown_age_days + ' days)\nchain    = 1 + ' + C.chain_step + ' × clamp(chains − 1, 0, ' + C.chain_max_extra + ')</div>' +
       '<p>So growth ranges from ' + (1 + C.growth_floor / 100 * C.growth_weight).toFixed(2) + ' to ' + (1 + C.growth_cap / 100 * C.growth_weight).toFixed(2) + ', maturity from ' + C.maturity_floor + ' (just listed) to ' + (C.maturity_floor + C.maturity_range).toFixed(1) + ' (three years or more), and chain from 1.00 to ' + (1 + C.chain_step * C.chain_max_extra).toFixed(2) + '. Age is measured against the snapshot date (' + R.as_of + '), never the current clock.</p>' +
@@ -221,7 +230,7 @@
       '<li>Rule-based exclusions: wrapped, staked, bridged and versioned products (bridge, staking and wrapper categories; names such as wrapped, staked, bridge, LST; version suffixes), CEX-category entries, and exchange brands learned from the CEX names in the snapshot itself.</li>' +
       '<li>Protocols with a market cap are never on the board; they appear in the Live tokens tab at their real mcap.</li>' +
       '<li>Result: ' + R.watchlist_size + ' watchlist + ' + R.extra_size + ' early = ' + R.board_size + ' rows; ' + R.live_size + ' live-token protocols set aside.</li></ul>' +
-      '<h2>Farm plan</h2><p>Each row has a ' + rows[0].farm_steps.length + '-step plan with cost and time per step. Sizes are rule-based: capital $50 / $100 / $150 / $250 by TVL (under $25M, $100M, $500M, above), hold period 14 / 30 / 45 / 60 days by age (under 90, 365, 1095 days, older). The action wording follows the category. It is a template for a small, separate wallet, not financial advice.</p>' +
+      '<h2>Farm plan</h2><p>Each row has a ' + rows[0].farm_steps.length + '-step plan, with a cost and a time for every step. Sizes are rule-based: capital $50 / $100 / $150 / $250 by TVL (under $25M, $100M, $500M, above), hold period 14 / 30 / 45 / 60 days by age (under 90, 365, 1095 days, older). The action wording follows the category (curator vault deposits, LP positions, supply and borrow, collateral and liquidation line, identity check and minimum subscription, and so on). The TVL check cadence follows the 7-day change (every 2 to 3 days when TVL is falling or surging, weekly otherwise), and the last step sets the exit rule: watch for a token or snapshot announcement, and stop if none comes. These are estimates for a small, separate wallet, not financial advice.</p>' +
       '<h2>Limits</h2><p>mcap / TVL is a crude comparable, and medians from small samples are noisy, hence the shrinkage and clamp. Growth uses one week of TVL change, so it moves with short-term swings. Chain count rewards reach, not usage. Treat ranks as a starting order for research.</p></article>';
   }
 
