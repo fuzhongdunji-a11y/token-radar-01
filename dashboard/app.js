@@ -142,8 +142,8 @@
       return '<tr tabindex="0" data-slug="' + esc(r.slug) + '"><td>' + badge(r.rank) + '</td>' +
         '<td class="nm"><b>' + esc(r.name) + '</b>' + (r.watchlist ? '<span class="tag wl">watchlist</span>' : '<span class="tag">early</span>') + '</td>' +
         '<td class="mut">' + esc(cat(r)) + '</td><td class="mut">' + chains(r) + '</td>' +
-        '<td class="n">' + usd(r.tvl_usd) + '</td><td class="n">' + chg(r.change_7d) + '</td><td class="n val">' + usd(r.implied_value_usd) + '</td></tr>';
-    }).join('') : '<tr><td colspan="7" class="empty">No rows match these filters.</td></tr>';
+        '<td class="n">' + usd(r.tvl_usd) + '</td><td class="n">' + chg(r.change_7d) + '</td><td class="n val">' + usd(r.implied_value_usd) + '</td>' + evMult(r) + evGrow(r) + evAge(r) + '</tr>';
+    }).join('') : '<tr><td colspan="10" class="empty">No rows match these filters.</td></tr>';
     document.getElementById('bt').innerHTML = head(BCOLS, B) + '<tbody>' + body + '</tbody>';
     bindSort(B, drawBoard);
     document.querySelectorAll('#bt tbody tr[data-slug]').forEach(function (tr) {
