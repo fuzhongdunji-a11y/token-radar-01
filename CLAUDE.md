@@ -45,3 +45,10 @@ mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../kit/token-radar-0
 
 ## 現段階のスコープ
 - 環境確認・キット理解・前提ファイル作成のみ完了。model / dashboard の実装、GitHub リポジトリ作成、キーペア作成、サインイン、提出はまだ行っていない。
+
+## v5: farm plan の第二深化（Gemini 4 Carbon のパターン体系を採用）
+- 分岐元: best（v1, 258efc5）。モデル式・board の行・順位・implied_value_usd は v1 と同一（farm_steps 以外の全フィールドを v1 出力と突き合わせて一致確認）。
+- plan 生成は `lib/farm.ts` に分離。category を Gemini の6アーキタイプ（lending / dex / yield / deriv / bridge / market）へ写像: snapshot の category 名の完全一致表 → 未知名はキーワード規則 → 既定は yield。
+- 各 plan は11ステップ: Scope → Fund → Opening(3種) → First action → Second action → Repeat → Monitoring(2種) → Hold → Record-keeping(8種) → Exit(2種) → Wrap-up。各ステップに Cost / Time を付与。
+- パターン選択は slug の FNV-1a ハッシュ（スロット別ソルト）。APY・ペア名など snapshot に無い値のプレースホルダは使わず、TVL・チェーン・資本配分・ガス額・60%閾値などの実値で置換。
+- gemini-brief1.md 由来の文面パターンは `lib/farm.ts` 内に収録。ダッシュボードは Model タブの farm plan 説明に1文追記のみ。スクリーンショットは再撮影（board / detail / filtered）。
