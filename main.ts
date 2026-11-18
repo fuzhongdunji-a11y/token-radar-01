@@ -34,6 +34,16 @@ if (issue !== null) {
   process.exit(1);
 }
 
+// Invariant: the ordered (slug, implied value) array of the v1 board must be unchanged by dashboard work.
+const refFile = join(here, 'scripts', 'ref-order.json');
+if (existsSync(refFile)) {
+  const ref = JSON.parse(readFileSync(refFile, 'utf8')) as { as_of: string; order: Array<[string, number]> };
+  if (ref.as_of === snapshot.as_of && JSON.stringify(board.map((r) => [r.slug, r.implied_value_usd])) !== JSON.stringify(ref.order)) {
+    process.stderr.write('token radar: board order/implied values differ from the v1 reference\n');
+    process.exit(1);
+  }
+}
+
 mkdirSync(out, { recursive: true });
 writeFileSync(join(out, 'board.json'), `${JSON.stringify({ rows: board })}\n`);
 writeFileSync(join(out, 'data.js'), dataScript(radar));
@@ -49,7 +59,10 @@ function copyFiles(from: string, to: string): string[] {
   }
   return names;
 }
-copyFiles(join(here, 'dashboard'), join(out, 'dashboard'));
+const dashNames = copyFiles(join(here, 'dashboard'), join(out, 'dashboard'));
+const dashBytes = dashNames.reduce((a, n) => a + statSync(join(out, 'dashboard', n)).size, 0);
+if (dashBytes >= TEXT_MAX_BYTES) throw new Error(`dashboard/ is ${dashBytes} bytes, limit ${TEXT_MAX_BYTES}`);
+process.stdout.write(`token radar: dashboard/ ${dashBytes} bytes, headroom ${TEXT_MAX_BYTES - dashBytes}\n`);
 const shots = copyFiles(shotsDir, join(out, 'screenshots'));
 if (shots.length < 3) {
   process.stderr.write(`token radar: ${shotsDir} holds ${shots.length} image(s); 3 are required, so no dossier was written\n`);

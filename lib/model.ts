@@ -164,7 +164,36 @@ export interface Radar {
   as_of: string; source: string; floor_usd: number; model_version: string; constants: typeof MODEL;
   global_median: number; categories: CategoryStat[];
   watchlist_size: number; board_size: number; extra_size: number; live_size: number;
-  rows: BoardRow[]; live: LiveRow[];
+  rows: Array<BoardRow & { cat: string; pc: string }>; live: Array<LiveRow & { cat: string; pc: string }>;
+  facets: { categories: Array<{ id: string; pre: number; live: number; mult: number }>; chains: Array<{ id: string; pre: number; live: number }>; global_mult: number };
+}
+
+// code-unit comparison (no locale), used for every facet sort
+const cmpStr = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+const r4 = (x: number): number => Math.round(x * 1e4) / 1e4;
+
+// Facets are precomputed here so the browser never recomputes category/chain counts or peer multiples.
+// The snapshot has no per-chain TVL, so a protocol's primary chain ("pc") is its first listed chain.
+function buildFacets(board: BoardRow[], live: LiveRow[], table: ReturnType<typeof categoryTable>) {
+  const cats = new Map<string, { pre: number; live: number }>();
+  const chs = new Map<string, { pre: number; live: number }>();
+  const bump = (m: Map<string, { pre: number; live: number }>, k: string, f: 'pre' | 'live') => {
+    const e = m.get(k) ?? { pre: 0, live: 0 };
+    e[f]++;
+    m.set(k, e);
+  };
+  for (const [list, f] of [[board, 'pre'], [live, 'live']] as const) {
+    for (const r of list) {
+      bump(cats, r.category ?? UNCATEGORIZED, f);
+      for (const c of new Set(r.chains)) bump(chs, c, f);
+    }
+  }
+  const order = <T extends { id: string; pre: number }>(a: T, b: T) => b.pre - a.pre || cmpStr(a.id, b.id);
+  return {
+    categories: [...cats].map(([id, e]) => ({ id, pre: e.pre, live: e.live, mult: r4(table.lookup.get(id)?.multiple ?? table.global_median) })).sort(order),
+    chains: [...chs].map(([id, e]) => ({ id, pre: e.pre, live: e.live })).sort(order),
+    global_mult: r4(table.global_median),
+  };
 }
 
 export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Radar } {
@@ -199,7 +228,9 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     as_of: snapshot.as_of, source: snapshot.source, floor_usd: snapshot.floor_usd, model_version: MODEL.version, constants: MODEL,
     global_median: table.global_median, categories: table.stats,
     watchlist_size: wl.size, board_size: board.length, extra_size: board.filter((r) => !r.watchlist).length, live_size: live.length,
-    rows: board, live,
+    rows: board.map((r) => ({ ...r, cat: r.category ?? UNCATEGORIZED, pc: r.chains[0] ?? '—' })),
+    live: live.map((r) => ({ ...r, mcap_tvl: r4(r.mcap_tvl), cat: r.category ?? UNCATEGORIZED, pc: r.chains[0] ?? '—' })),
+    facets: buildFacets(board, live, table),
   };
   return { board, radar };
 }
