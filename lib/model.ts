@@ -1,5 +1,8 @@
 // radar-2 value model: snapshot in, ranked pre-token board + live-token list out.
 // implied = TVL x category_multiple x growth x maturity x chain. Everything derives from snapshot numbers.
+// Display-only layers (drivers, execution econ, facets) are computed here at build time and never feed back into the model.
+import { COST_RE, farmSteps } from './farm.ts';
+import type { FarmStep } from './farm.ts';
 
 export interface Protocol {
   slug: string; name: string; category: string | null; chains: string[]; tvl_usd: number;
@@ -31,6 +34,8 @@ const clamp = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x
 const catOf = (p: Protocol) => p.category ?? UNCATEGORIZED;
 const bySlug = (a: { slug: string }, b: { slug: string }) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0);
 const byCat = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+const r4 = (x: number): number => Math.round(x * 1e4) / 1e4;
+const cents = (n: number) => Math.round(n * 100) / 100;
 
 export function median(xs: number[]): number | null {
   if (xs.length === 0) return null;
@@ -109,62 +114,109 @@ export function isExtraEligible(p: Protocol, brands: Set<string>) {
   return !words.some((w) => brands.has(w));
 }
 
-// ---- farm plan ----
-type Kit = { act: string; ask: string; verb: string };
-const KITS: Record<string, Kit> = {
-  dex: { act: 'swap and provide liquidity', ask: 'a stable pair LP position', verb: 'swaps' },
-  lend: { act: 'supply and borrow', ask: 'a supply position with a small borrow', verb: 'loan actions' },
-  yield: { act: 'deposit into a vault', ask: 'a single vault deposit', verb: 'vault actions' },
-  stake: { act: 'stake or restake', ask: 'a staking deposit', verb: 'stake actions' },
-  bridge: { act: 'bridge assets', ask: 'a round-trip bridge transfer', verb: 'bridge transfers' },
-  deriv: { act: 'trade a small perp or option position', ask: 'a low-leverage position', verb: 'trades' },
-  cdp: { act: 'mint the stablecoin against collateral', ask: 'an over-collateralised mint', verb: 'mint and repay cycles' },
-  rwa: { act: 'subscribe to a tokenised asset', ask: 'a small primary subscription', verb: 'subscriptions' },
-  generic: { act: 'use the core product', ask: 'a small deposit', verb: 'core actions' },
-};
-function kitFor(category: string | null): Kit {
-  const c = (category ?? '').toLowerCase();
-  if (/dex|liquidity|amm|farm|launchpad/.test(c)) return KITS.dex!;
-  if (/lend|credit|collateral|allocator|curator/.test(c)) return KITS.lend!;
-  if (/yield|vault|basis|index|aggregator|cedefi/.test(c)) return KITS.yield!;
-  if (/stak|restak|chain/.test(c)) return KITS.stake!;
-  if (/bridge/.test(c)) return KITS.bridge!;
-  if (/deriv|option|perp|synthetic|prediction|rate/.test(c)) return KITS.deriv!;
-  if (/cdp|stable|algo|reserve/.test(c)) return KITS.cdp!;
-  if (/rwa|real|asset|payment|card/.test(c)) return KITS.rwa!;
-  return KITS.generic!;
-}
-export function capitalFor(tvl: number): number { return tvl < 25e6 ? 50 : tvl < 100e6 ? 100 : tvl < 500e6 ? 150 : 250; }
-export function holdDaysFor(age: number | null): number { const a = age ?? MODEL.unknown_age_days; return a < 90 ? 14 : a < 365 ? 30 : a < 1095 ? 45 : 60; }
-const fmtM = (n: number) => (n >= 1e9 ? `$${(n / 1e9).toFixed(2)}B` : `$${(n / 1e6).toFixed(1)}M`);
+// ---- execution economics (data.js only): bound to the step parameters from lib/farm.ts, never parsed out of the prose ----
+export interface EconStep { n: number; cap_usd: number; reused: boolean; additive: boolean; fee_usd: number; mins: number }
+export interface Econ { peak_cap_usd: number; total_fee_usd: number; total_mins: number; cadence: 'one-shot' | 'weekly' | 'biweekly' | 'monthly'; steps: EconStep[] }
 
-export function farmPlan(p: Protocol, f: Factors, implied: number): string[] {
-  const kit = kitFor(p.category);
-  const chain = p.chains[0] ?? 'its main chain';
-  const cap = capitalFor(p.tvl_usd), hold = holdDaysFor(f.age_days);
-  const gas = chain === 'Ethereum' ? 12 : 2;
-  const slice = Math.round(cap * 0.4), reserve = cap - slice;
-  const trend = p.change_7d === null ? 'no 7-day TVL reading' : `TVL ${p.change_7d >= 0 ? '+' : ''}${p.change_7d.toFixed(1)}% over 7 days`;
-  const ageTxt = f.age_days === null ? 'unknown listing age' : `${f.age_days} days tracked`;
-  const hold2 = Math.max(7, Math.round(hold / 2));
-  const steps = [
-    `Scope ${p.name} (${p.category ?? 'uncategorised'}): ${fmtM(p.tvl_usd)} TVL on ${chain}, ${trend}, ${ageTxt}. Model value ${fmtM(implied)}. Read the docs and last 20 transactions and confirm the app is live and there is no token yet. Cost: $0. Time: 30 min.`,
-    `Fund a fresh ${chain} wallet with $${cap} of stable capital plus about $${gas} of native gas for ${p.name}. Keep it separate from main funds so activity stays attributable. Cost: $${cap + gas} deployed ($${gas} gas, recoverable principal). Time: 20 min.`,
-    `First action on ${p.name}: ${kit.act} with $${slice} (${kit.ask}). Check the quote before signing and keep slippage under 0.5%. Cost: about $${(gas * 0.4).toFixed(2)} gas plus fees. Time: 15 min.`,
-    `Add a second, different action on ${p.name} using $${reserve - Math.round(reserve / 2)}, such as a withdrawal and re-entry, so the wallet shows more than one kind of ${kit.verb}. Cost: about $${(gas * 0.5).toFixed(2)} gas. Time: 15 min.`,
-    `Repeat ${kit.verb} on ${p.name} weekly: 3 rounds of $${Math.max(5, Math.round(cap * 0.1))} or less, spaced 7 days apart, to build a steady record rather than one burst. Cost: about $${(gas * 1.2).toFixed(2)} gas across the rounds. Time: 10 min per round, 3 weeks.`,
-    `Keep the position open for ${hold} days (the hold for ${f.age_days === null ? 'an unknown-age' : f.age_days + '-day-old'} protocols). Check at day ${hold2} and exit if TVL drops below ${fmtM(p.tvl_usd * 0.6)}. Cost: $0 beyond the opportunity cost of $${cap} locked. Time: 5 min per check, ${hold} days elapsed.`,
-    `Exit ${p.name}: withdraw everything, record the cost basis (about $${Math.round(gas * 3)} gas in total), and screenshot the wallet's history. Watch the protocol's announcements for a points programme or claim page. Cost: about $${gas} gas. Time: 20 min.`,
-  ];
-  return steps;
+/** 7-day TVL change in percentage points as the snapshot reports it (change_7d), one decimal; null when absent. */
+export function tvl7d(p: { change_7d: number | null }): number | null {
+  if (p.change_7d === null || !Number.isFinite(p.change_7d)) return null;
+  const v = Math.round(p.change_7d * 10) / 10;
+  return v === 0 ? 0 : v;
+}
+export function cadenceOf(steps: string[]): Econ['cadence'] {
+  const t = steps.join('\n').toLowerCase();
+  if (/weekly|every 7 days/.test(t)) return 'weekly';
+  if (/biweekly|every 2 weeks|every 14 days/.test(t)) return 'biweekly';
+  if (/monthly|every 30 days/.test(t)) return 'monthly';
+  return 'one-shot';
+}
+/** Peak working capital: recycled principal never raises the peak, additive reserves stack, zero-cash steps leave it alone. */
+export function buildEcon(steps: FarmStep[]): Econ {
+  let peak = 0;
+  const out: EconStep[] = steps.map((s, i) => {
+    let reused = false;
+    if (s.cap === 0) { /* peak unchanged */ }
+    else if (s.additive) peak += s.cap;
+    else if (s.cap <= peak && peak > 0) reused = true;
+    else peak = s.cap;
+    return { n: i + 1, cap_usd: s.cap, reused, additive: s.additive && s.cap > 0, fee_usd: cents(s.fee), mins: s.mins };
+  });
+  return {
+    peak_cap_usd: Math.round(peak), total_fee_usd: cents(out.reduce((a, s) => a + s.fee_usd, 0)),
+    total_mins: out.reduce((a, s) => a + s.mins, 0), cadence: cadenceOf(steps.map((s) => s.text)), steps: out,
+  };
+}
+/** Build-time reconciliation: ledger numbers must equal the "Cost: ... Time: ..." figures printed in each farm_steps sentence. Throws on any mismatch. */
+export function assertEcon(slug: string, texts: string[], e: Econ): void {
+  const fail = (m: string): never => { throw new Error(`econ ${slug}: ${m}`); };
+  if (e.steps.length !== texts.length) fail(`${e.steps.length} econ steps vs ${texts.length} farm steps`);
+  if (e.total_fee_usd !== cents(e.steps.reduce((a, s) => a + s.fee_usd, 0))) fail('fee total');
+  if (e.total_mins !== e.steps.reduce((a, s) => a + s.mins, 0)) fail('minutes total');
+  e.steps.forEach((s, i) => {
+    const m = COST_RE.exec(texts[i]!);
+    if (s.n !== i + 1) fail(`step number ${s.n} at ${i}`);
+    if (m === null) return fail(`step ${s.n} has no cost line`);
+    if (Number(m[1]) !== s.cap_usd) fail(`step ${s.n} capital ${s.cap_usd} vs text ${m[1]}`);
+    if (Number(m[2]) !== s.fee_usd) fail(`step ${s.n} fee ${s.fee_usd} vs text ${m[2]}`);
+    if (Number(m[3]) !== s.mins) fail(`step ${s.n} minutes ${s.mins} vs text ${m[3]}`);
+  });
+  const caps = e.steps.map((s) => s.cap_usd), mx = Math.max(0, ...caps), sum = caps.reduce((a, b) => a + b, 0);
+  if (e.peak_cap_usd < mx || e.peak_cap_usd > sum) fail(`peak ${e.peak_cap_usd} outside ${mx}..${sum}`);
+  if (e.steps.every((s) => !s.additive) && e.peak_cap_usd !== mx) fail('peak');
+}
+
+// ---- display-only drivers (v6): precomputed here, only formatted in the browser ----
+export interface Drivers {
+  mult: number | null; mult_basis: 'T'; mult_peer_median: number; mult_category_median: number;
+  growth_pct: number | null; growth_start: number | null; growth_end: number | null;
+  age_days: number | null; age_launch_date: string | null; age_factor: number;
+}
+/** mult = implied / TVL (the snapshot's only base metric); growth = reported 7-day TVL change (no 30-day field exists); age against as_of. */
+export function driversOf(r: BoardRow, globalMedian: number): Drivers {
+  const c = r.change_7d;
+  return {
+    mult: r.tvl_usd > 0 ? r4(r.implied_value_usd / r.tvl_usd) : null, mult_basis: 'T',
+    mult_peer_median: r4(r.model.category_multiple), mult_category_median: r4(globalMedian),
+    growth_pct: c, growth_start: c !== null && c > -100 ? Math.round(r.tvl_usd / (1 + c / 100)) : null, growth_end: c !== null ? Math.round(r.tvl_usd) : null,
+    age_days: r.model.age_days, age_launch_date: r.listed_at, age_factor: r4(r.model.maturity_multiplier),
+  };
 }
 
 // ---- board ----
+export type Cohort = { cat: string; pc: string };
+export type RadarRow = BoardRow & Cohort & { drivers: Drivers; tvl_7d_pct: number | null; econ: Econ };
+export type RadarLive = LiveRow & Cohort & { tvl_7d_pct: number | null };
+export interface Facets { categories: Array<{ id: string; pre: number; live: number; mult: number }>; chains: Array<{ id: string; pre: number; live: number }>; global_mult: number }
 export interface Radar {
   as_of: string; source: string; floor_usd: number; model_version: string; constants: typeof MODEL;
   global_median: number; categories: CategoryStat[];
   watchlist_size: number; board_size: number; extra_size: number; live_size: number;
-  rows: BoardRow[]; live: LiveRow[];
+  rows: RadarRow[]; live: RadarLive[]; facets: Facets;
+}
+
+// Facets are precomputed so the browser never recomputes counts or peer multiples. The snapshot has no per-chain TVL,
+// so a protocol's primary chain ("pc") is its first listed chain.
+function buildFacets(board: BoardRow[], live: LiveRow[], table: ReturnType<typeof categoryTable>): Facets {
+  const cats = new Map<string, { pre: number; live: number }>();
+  const chs = new Map<string, { pre: number; live: number }>();
+  const bump = (m: Map<string, { pre: number; live: number }>, k: string, f: 'pre' | 'live') => {
+    const e = m.get(k) ?? { pre: 0, live: 0 };
+    e[f]++;
+    m.set(k, e);
+  };
+  for (const [list, f] of [[board, 'pre'], [live, 'live']] as const) {
+    for (const row of list) {
+      bump(cats, row.category ?? UNCATEGORIZED, f);
+      for (const c of new Set(row.chains)) bump(chs, c, f);
+    }
+  }
+  const order = <T extends { id: string; pre: number }>(a: T, b: T) => b.pre - a.pre || byCat(a.id, b.id);
+  return {
+    categories: [...cats].map(([id, e]) => ({ id, pre: e.pre, live: e.live, mult: r4(table.lookup.get(id)?.multiple ?? table.global_median) })).sort(order),
+    chains: [...chs].map(([id, e]) => ({ id, pre: e.pre, live: e.live })).sort(order),
+    global_mult: r4(table.global_median),
+  };
 }
 
 export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Radar } {
@@ -186,20 +238,27 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     .filter((p) => !wl.has(p.slug) && isExtraEligible(p, brands))
     .map(score).sort(byImplied); // board = watchlist + every eligible extra (no fixed row count)
   const ranked = [...must, ...extras].sort(byImplied);
+  const plans = ranked.map(({ p, f, implied }) => farmSteps(p, f, implied));
   const board: BoardRow[] = ranked.map(({ p, f, implied }, i) => ({
     rank: i + 1, slug: p.slug, name: p.name, category: p.category, chains: p.chains, tvl_usd: p.tvl_usd, change_7d: p.change_7d,
     mcap_usd: null, listed_at: p.listed_at, token_status: 'pre-token', watchlist: wl.has(p.slug), implied_value_usd: implied,
-    model: f, farm_steps: farmPlan(p, f, implied),
+    model: f, farm_steps: plans[i]!.map((s) => s.text),
   }));
+  const rows: RadarRow[] = board.map((b, i) => {
+    const econ = buildEcon(plans[i]!);
+    assertEcon(b.slug, b.farm_steps, econ);
+    return { ...b, cat: b.category ?? UNCATEGORIZED, pc: b.chains[0] ?? '—', drivers: driversOf(b, table.global_median), tvl_7d_pct: tvl7d(b), econ };
+  });
   const live: LiveRow[] = snapshot.protocols.filter(isLive).sort((a, b) => b.mcap_usd! - a.mcap_usd! || bySlug(a, b)).map((p) => ({
     slug: p.slug, name: p.name, category: p.category, chains: p.chains, tvl_usd: p.tvl_usd, change_7d: p.change_7d, mcap_usd: p.mcap_usd!,
-    mcap_tvl: p.tvl_usd > 0 ? p.mcap_usd! / p.tvl_usd : 0, listed_at: p.listed_at, symbol: p.symbol,
+    mcap_tvl: p.tvl_usd > 0 ? r4(p.mcap_usd! / p.tvl_usd) : 0, listed_at: p.listed_at, symbol: p.symbol,
   }));
   const radar: Radar = {
     as_of: snapshot.as_of, source: snapshot.source, floor_usd: snapshot.floor_usd, model_version: MODEL.version, constants: MODEL,
     global_median: table.global_median, categories: table.stats,
     watchlist_size: wl.size, board_size: board.length, extra_size: board.filter((r) => !r.watchlist).length, live_size: live.length,
-    rows: board, live,
+    rows, live: live.map((l) => ({ ...l, cat: l.category ?? UNCATEGORIZED, pc: l.chains[0] ?? '—', tvl_7d_pct: tvl7d(l) })),
+    facets: buildFacets(board, live, table),
   };
   return { board, radar };
 }
