@@ -86,7 +86,7 @@
 
   // ---------- radar: two regimes (pre / live) sharing one filter bar, never one tbody ----------
   var S0 = { cat: '', chain: '', tier: '', q: '', cap: 0, mins: 0, sig: 'all' };
-  var S = { mode: 'pre', card: '', scroll: 0, pre: { key: 'rank', dir: 'asc' }, liv: { key: 'mcap_usd', dir: 'desc' } };
+  var S = { mode: 'pre', card: '', scroll: 0, sel: { pre: '', live: '' }, pre: { key: 'rank', dir: 'asc' }, liv: { key: 'mcap_usd', dir: 'desc' } };
   Object.assign(S, S0);
   var CAPS = [[0, 'Any', 'No peak capital limit'], [100, '≤ $100', 'Peak recoverable working capital up to $100'], [150, '≤ $150', 'Peak recoverable working capital up to $150'], [300, '≤ $300', 'Peak recoverable working capital up to $300']];
   var TIMES = [[0, 'Any', 'No active execution time limit'], [130, '≤ 130m', 'Total active execution time up to 130 minutes'], [160, '≤ 160m', 'Total active execution time up to 160 minutes']];
@@ -110,19 +110,19 @@
   function resetView(all) {
     var keep = all ? {} : { cap: 1, mins: 1, sig: 1 };
     Object.keys(S0).forEach(function (k) { if (!keep[k]) S[k] = S0[k]; });
-    if (all) { S.pre = { key: 'rank', dir: 'asc' }; S.liv = { key: 'mcap_usd', dir: 'desc' }; S.card = ''; }
+    if (all) { S.pre = { key: 'rank', dir: 'asc' }; S.liv = { key: 'mcap_usd', dir: 'desc' }; S.card = ''; S.sel = { pre: '', live: '' }; }
     drawBoard();
   }
 
   function boardView() {
     var np = rows.length, nl = live.length;
-    app.innerHTML =
+    app.innerHTML = '<div class="ctl" id="ctl">' +
       '<div class="reg"><button data-m="pre" class="rp"><b>PRE-TOKEN RADAR · ' + np + '</b><small>Implied valuation (snapshot model) · ' + R.watchlist_size + ' watchlist + ' + R.extra_size + ' early</small></button>' +
       '<button data-m="live" class="rl"><b>LIVE-TOKEN BENCHMARKS · ' + nl + '</b><small>Observed market cap · reference comps only, excluded from radar</small></button></div>' +
       '<div class="bar"><select id="f-cat" aria-label="Category">' + fo(F.categories, 'All categories (' + np + ' pre / ' + nl + ' live)') + '</select>' +
       '<select id="f-chain" aria-label="Chain">' + fo(F.chains, 'All chains (' + np + ' pre / ' + nl + ' live)') + '</select>' +
       '<div class="seg" id="f-tier"></div><input id="f-q" type="search" aria-label="Search"><button id="f-reset" class="rst"></button></div>' +
-      '<div class="econ" id="econ"></div><div class="strip" id="strip"></div><div class="wrap"><table id="bt"></table></div><div id="card"></div><p class="hint" id="hint"></p>';
+      '<div class="econ" id="econ"></div><div class="strip" id="strip"></div></div><div class="wrap"><table id="bt"></table></div><div id="card"></div><p class="hint" id="hint"></p>';
     app.querySelectorAll('[data-m]').forEach(function (b) { b.onclick = function () { location.hash = b.getAttribute('data-m') === 'live' ? '#live' : '#board'; }; });
     document.getElementById('f-q').oninput = function () { S.q = this.value; drawBoard(); };
     document.getElementById('f-cat').onchange = function () { S.cat = this.value; drawBoard(); };
@@ -135,7 +135,47 @@
     };
     document.getElementById('f-tier').onclick = click; document.getElementById('econ').onclick = click;
     drawBoard();
-    document.querySelector('.wrap').scrollTop = S.scroll || 0;
+    window.scrollTo(0, S.scroll || 0);
+    var cur = S.sel[S.mode] && app.querySelector('#bt tr.sel');
+    if (cur) { cur.focus({ preventScroll: true }); cur.scrollIntoView({ block: 'nearest' }); }
+  }
+  // ---------- keyboard selection: state is a slug per regime, never a clock or random value ----------
+  function syncCtl() { var c = document.getElementById('ctl'); if (c) document.documentElement.style.setProperty('--ctlh', c.offsetHeight + 'px'); }
+  function rowsEl() { return Array.prototype.slice.call(app.querySelectorAll('#bt tbody tr[data-slug],#bt tbody tr[data-live]')); }
+  function rowKey(tr) { return tr.getAttribute('data-slug') || tr.getAttribute('data-live'); }
+  function select(tr, focus) {
+    var prev = app.querySelector('#bt tr.sel');
+    if (prev) { prev.classList.remove('sel'); prev.removeAttribute('aria-selected'); }
+    tr.classList.add('sel'); tr.setAttribute('aria-selected', 'true'); S.sel[S.mode] = rowKey(tr);
+    if (focus) { tr.focus({ preventScroll: true }); tr.scrollIntoView({ block: 'nearest' }); }
+  }
+  function openRow(tr) {
+    select(tr, 0);
+    if (tr.hasAttribute('data-live')) { S.card = tr.getAttribute('data-live'); drawBoard(); var t = app.querySelector('#bt tr.sel'); if (t) t.focus({ preventScroll: true }); return; }
+    S.scroll = window.scrollY; location.hash = '#p/' + tr.getAttribute('data-slug');
+  }
+  function onKey(e) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    var t = e.target, tag = t && t.tagName, typing = tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA', k = e.key;
+    var board = !!document.getElementById('bt'), q = document.getElementById('f-q');
+    if (k === 'Escape') {
+      if (location.hash.indexOf('#p/') === 0) { location.hash = '#board'; return; }
+      if (!board) return;
+      if (t === q) { if (q.value) { S.q = ''; drawBoard(); } else q.blur(); return; }
+      if (S.card) { S.card = ''; drawBoard(); }
+      return;
+    }
+    if (!board) return;
+    var list = rowsEl(), i = list.indexOf(app.querySelector('#bt tr.sel')), step = 0;
+    if (k === '/' && !typing) { e.preventDefault(); q.focus(); q.select(); return; }
+    if (t === q && k === 'ArrowDown' && list.length) { e.preventDefault(); select(list[i < 0 ? 0 : i], 1); return; }
+    if (typing) return;
+    if (k === 'ArrowDown' || k === 'j') step = 1; else if (k === 'ArrowUp' || k === 'k') step = -1;
+    else if (k === 'Home' || k === 'End') step = k === 'Home' ? -1e9 : 1e9;
+    else if (k === 'Enter' && tag !== 'BUTTON' && tag !== 'TR' && tag !== 'A' && i >= 0) { openRow(list[i]); return; }
+    if (!step || !list.length) return;
+    e.preventDefault();
+    select(list[Math.max(0, Math.min(list.length - 1, i < 0 ? (step > 0 ? 0 : list.length - 1) : i + step))], 1);
   }
   function drawBoard() {
     var pre = S.mode === 'pre', st = pre ? S.pre : S.liv, src = pre ? rows : live;
@@ -193,12 +233,10 @@
     bindSort(st);
     app.querySelectorAll('[data-clr]').forEach(function (b) { b.onclick = function () { if (b.getAttribute('data-clr') === 'chain') { S.chain = ''; drawBoard(); } else resetView(1); }; });
     app.querySelectorAll('#bt tbody tr[data-slug],#bt tbody tr[data-live]').forEach(function (tr) {
-      var go = function () {
-        if (tr.hasAttribute('data-live')) { S.card = tr.getAttribute('data-live'); drawBoard(); return; }
-        S.scroll = document.querySelector('.wrap').scrollTop; location.hash = '#p/' + tr.getAttribute('data-slug');
-      };
-      tr.onclick = go; tr.onkeydown = function (e) { if (e.key === 'Enter') go(); };
+      if (S.sel[S.mode] === rowKey(tr)) { tr.classList.add('sel'); tr.setAttribute('aria-selected', 'true'); }
+      tr.onclick = function () { openRow(tr); }; tr.onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); openRow(tr); } };
     });
+    syncCtl();
   }
 
   // ---------- detail: why it ranks here, execution ledger, model breakdown ----------
@@ -298,8 +336,9 @@
     else { S.mode = h === 'live' ? 'live' : 'pre'; boardView(); }
   }
   window.addEventListener('hashchange', route);
-  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && location.hash.indexOf('#p/') === 0) location.hash = '#board'; });
+  document.addEventListener('keydown', onKey);
+  window.addEventListener('resize', syncCtl);
   document.getElementById('sub').textContent = 'Snapshot ' + R.as_of + ' · ' + R.source.split(' ')[0] + ' · model ' + R.model_version + ' · ' + R.board_size + ' pre-token rows';
-  document.getElementById('foot').textContent = 'Values derive only from the snapshot. No network, no clock. Floor TVL ' + usd(R.floor_usd) + '.';
+  document.getElementById('foot').innerHTML = '<span>Values derive only from the snapshot. No network, no clock. Floor TVL ' + usd(R.floor_usd) + '.</span><span class="kbh"><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Enter</kbd> detail · <kbd>/</kbd> search · <kbd>Esc</kbd> close</span>';
   route();
 })();
