@@ -6,7 +6,7 @@
 
 A token launch radar. It reads a sealed snapshot of DeFi protocols and ranks the ones with no token yet by what a launch could be worth, each with a costed farm plan. Protocols whose token already trades are shown in a separate view with their market cap as it is. The dashboard is static and works offline.
 
-## Model: radar-2
+## Model: radar-3
 
 ```
 implied = TVL × category_multiple × growth × maturity × chain
@@ -16,7 +16,7 @@ Everything comes from the snapshot's own numbers; no protocol is named in the co
 
 | Term | Definition | Constants |
 |---|---|---|
-| `category_multiple` | median mcap/TVL of live-token protocols in the category, shrunk to the global median with weight `n/(n+k)`, then clamped | k = 5, clamp 0.10–3.00 |
+| `category_multiple` | median mcap/TVL of live-token protocols in the category, shrunk to the global median with weight `n/(n+k)`, then clamped | k = 10, clamp 0.10 to the 90th percentile of live mcap/TVL ratios (2.20 here) |
 | `growth` | `1 + clamp(change_7d, −40, 60)/100 × 0.35`; null counts as 0 | floor −40, cap 60, weight 0.35 |
 | `maturity` | `0.7 + 0.3 × min(age_days, 1095)/1095`, age from `listed_at` to the snapshot's `as_of`; unknown age counts as 365 days | floor 0.7, range 0.3, 1095 days |
 | `chain` | `1 + 0.02 × min(chains − 1, 5)` | step 0.02, max 5 extra chains |

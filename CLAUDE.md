@@ -25,7 +25,8 @@
 
 ## 価値モデルの方針
 - radar-2 方式: `implied = TVL × カテゴリ別ピア倍率 × growth × maturity × chain`。
-- カテゴリ別ピア倍率: **live-token のカテゴリ内 mcap/TVL 中央値** を基準に、サンプルが少ないカテゴリは全体中央値へ **shrinkage**、最終倍率は **clamp 0.10〜3.00**。
+- カテゴリ別ピア倍率（v3 / radar-3）: **live-token のカテゴリ内 mcap/TVL 中央値** を基準に、全体中央値へ重み **w = n/(n+10)** で **shrinkage**（v1 は n/(n+5)）。最終倍率は **clamp 0.10〜上限**。
+  - 上限は固定の 3.00 をやめ、**snapshot の live-token 個別 mcap/TVL 比の 90 パーセンタイル（nearest-rank）** から導出（現スナップショットで 2.20）。根拠: 新 shrinkage 後に上限を超えるカテゴリは n=1 の Prediction Market（生中央値 400×、shrink 後 約36.5）の1つだけで、次点は 1.73（Token Locker）。上限なしだと1サンプルの外れ値が全体を支配し、旧 3.00 は根拠のない値だった。90%点なら「live トークンの9割が取引される水準を超えるカテゴリ倍率は付けない」と説明でき、外れ値だけに効く。数値は `radar.multiple_cap` として data.js に出力し、モデル画面にも明記。
 - growth: `change_7d` を clamp した成長補正。maturity: `listed_at` からの経過日数（as_of 基準）。chain: `chains` から導出する補正。
 - ボード行数は固定しない: **watchlist 全件 + 適格な追加行の全件**（現スナップショットで約190行）。100〜4000行のゲート内であること。
 - 追加行の適格条件: `mcap_usd`・`gecko_id`・`symbol` がすべて null、かつ category / name / slug からのルールベースで wrapped・staked・bridged・versioned 性質（Bridge・Staking・Wrapper 系カテゴリ、名前の wrapped/staked/bridge/LST 等、バージョン接尾辞）、CEX カテゴリ、取引所名（スナップショット内の CEX カテゴリ名から導出）を除外。個別 slug・名前のハードコードリストは禁止。watchlist は条件にかかわらず全件掲載。

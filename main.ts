@@ -1,4 +1,4 @@
-// token-radar-01: reads the sealed snapshot, runs the radar-2 model (lib/model.ts), writes board.json,
+// token-radar-01: reads the sealed snapshot, runs the radar-3 model (lib/model.ts), writes board.json,
 // data.js, dashboard/, screenshots/ and, last, dossier.json. Node 22 standard library only, no clock, no randomness.
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../kit/token-radar-01-kit/input/snapshot.json
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';

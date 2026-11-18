@@ -1,4 +1,4 @@
-// radar-2 value model: snapshot in, ranked pre-token board + live-token list out.
+// radar-3 value model: snapshot in, ranked pre-token board + live-token list out.
 // implied = TVL x category_multiple x growth x maturity x chain. Everything derives from snapshot numbers.
 
 export interface Protocol {
@@ -8,14 +8,19 @@ export interface Protocol {
 export interface Snapshot { as_of: string; source: string; floor_usd: number; protocols: Protocol[]; watchlist: string[] }
 
 export const MODEL = {
-  version: 'radar-2',
-  shrink_k: 5, multiple_min: 0.1, multiple_max: 3.0,
+  version: 'radar-3',
+  shrink_k: 10, multiple_min: 0.1, multiple_cap_quantile: 0.9,
   growth_floor: -40, growth_cap: 60, growth_weight: 0.35,
   maturity_floor: 0.7, maturity_range: 0.3, maturity_days: 1095, unknown_age_days: 365,
   chain_step: 0.02, chain_max_extra: 5,
   implied_max: 100_000_000_000_000,
 };
 export const UNCATEGORIZED = 'Uncategorized';
+
+/** Nearest-rank quantile of a sorted-ascending list. */
+export function quantile(sorted: number[], q: number): number | null {
+  return sorted.length === 0 ? null : sorted[Math.max(0, Math.ceil(q * sorted.length) - 1)]!;
+}
 
 export interface CategoryStat { category: string; n: number; raw_median: number | null; weight: number; multiple: number }
 export interface Factors { category_multiple: number; growth_pct: number; growth_multiplier: number; maturity_multiplier: number; chain_multiplier: number; age_days: number | null; age_used: number }
@@ -49,7 +54,7 @@ export const isLive = (p: Protocol) => p.mcap_usd !== null;
 export const isPre = (p: Protocol) => p.mcap_usd === null;
 
 /** Category multiples from live-token mcap/TVL medians, shrunk toward the global median with weight n/(n+k). */
-export function categoryTable(snapshot: Snapshot): { global_median: number; stats: CategoryStat[]; lookup: Map<string, CategoryStat> } {
+export function categoryTable(snapshot: Snapshot): { global_median: number; multiple_cap: number; stats: CategoryStat[]; lookup: Map<string, CategoryStat> } {
   const live = snapshot.protocols.filter((p) => isLive(p) && p.tvl_usd > 0);
   const ratios = new Map<string, number[]>();
   for (const p of live) {
@@ -57,16 +62,19 @@ export function categoryTable(snapshot: Snapshot): { global_median: number; stat
     if (!ratios.has(k)) ratios.set(k, []);
     ratios.get(k)!.push(p.mcap_usd! / p.tvl_usd);
   }
-  const globalMedian = median(live.map((p) => p.mcap_usd! / p.tvl_usd)) ?? 1;
+  const all = live.map((p) => p.mcap_usd! / p.tvl_usd).sort((a, b) => a - b);
+  const globalMedian = median(all) ?? 1;
+  // Cap derived from the snapshot: the 90th percentile of individual live-token mcap/TVL ratios.
+  const cap = Math.max(MODEL.multiple_min, quantile(all, MODEL.multiple_cap_quantile) ?? 1);
   const cats = new Set<string>(snapshot.protocols.map(catOf));
   const stats: CategoryStat[] = [...cats].sort(byCat).map((category) => {
     const r = ratios.get(category) ?? [];
     const n = r.length, raw = median(r);
     const w = n / (n + MODEL.shrink_k);
     const blended = raw === null ? globalMedian : w * raw + (1 - w) * globalMedian;
-    return { category, n, raw_median: raw, weight: w, multiple: clamp(blended, MODEL.multiple_min, MODEL.multiple_max) };
+    return { category, n, raw_median: raw, weight: w, multiple: clamp(blended, MODEL.multiple_min, cap) };
   });
-  return { global_median: globalMedian, stats, lookup: new Map(stats.map((s) => [s.category, s])) };
+  return { global_median: globalMedian, multiple_cap: cap, stats, lookup: new Map(stats.map((s) => [s.category, s])) };
 }
 
 export function factors(p: Protocol, asOf: string, categoryMultiple: number): Factors {
@@ -162,7 +170,7 @@ export function farmPlan(p: Protocol, f: Factors, implied: number): string[] {
 // ---- board ----
 export interface Radar {
   as_of: string; source: string; floor_usd: number; model_version: string; constants: typeof MODEL;
-  global_median: number; categories: CategoryStat[];
+  global_median: number; multiple_cap: number; categories: CategoryStat[];
   watchlist_size: number; board_size: number; extra_size: number; live_size: number;
   rows: BoardRow[]; live: LiveRow[];
 }
@@ -197,7 +205,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
   }));
   const radar: Radar = {
     as_of: snapshot.as_of, source: snapshot.source, floor_usd: snapshot.floor_usd, model_version: MODEL.version, constants: MODEL,
-    global_median: table.global_median, categories: table.stats,
+    global_median: table.global_median, multiple_cap: table.multiple_cap, categories: table.stats,
     watchlist_size: wl.size, board_size: board.length, extra_size: board.filter((r) => !r.watchlist).length, live_size: live.length,
     rows: board, live,
   };

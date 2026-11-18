@@ -155,9 +155,9 @@
       '<div class="dh">' + badge(r.rank) + '<h2>' + esc(r.name) + '</h2>' + (r.watchlist ? '<span class="tag wl">watchlist</span>' : '<span class="tag">early</span>') + '<span class="tag">pre-token</span>' +
       '<div class="big"><b>' + usd(r.implied_value_usd) + '</b><span>implied value · rank ' + r.rank + ' of ' + rows.length + '</span></div></div>' +
       '<div class="grid2"><div>' +
-      '<div class="card"><h3>Model breakdown · radar-2</h3><table class="bd"><tbody>' +
+      '<div class="card"><h3>Model breakdown · ' + R.model_version + '</h3><table class="bd"><tbody>' +
       line('', 'TVL', 'DefiLlama snapshot, ' + R.as_of, full(r.tvl_usd)) +
-      line('×', 'Category multiple', esc(cat(r)) + ': ' + catNote + '; clamp ' + C.multiple_min + '–' + C.multiple_max, x(m.category_multiple), track(m.category_multiple, C.multiple_min, C.multiple_max)) +
+      line('×', 'Category multiple', esc(cat(r)) + ': ' + catNote + '; clamp ' + C.multiple_min + '–' + R.multiple_cap.toFixed(2), x(m.category_multiple), track(m.category_multiple, C.multiple_min, C.multiple_max)) +
       line('×', 'Growth', growthNote, x(m.growth_multiplier), track(m.growth_multiplier, 1 + C.growth_floor / 100 * C.growth_weight, 1 + C.growth_cap / 100 * C.growth_weight)) +
       line('×', 'Maturity', ageNote, x(m.maturity_multiplier), track(m.maturity_multiplier, C.maturity_floor, C.maturity_floor + C.maturity_range)) +
       line('×', 'Chain', nch + ' chain' + (nch === 1 ? '' : 's') + ': 1 + ' + C.chain_step + ' × clamp(' + nch + ' − 1, 0, ' + C.chain_max_extra + ')', x(m.chain_multiplier), track(m.chain_multiplier, 1, 1 + C.chain_step * C.chain_max_extra)) +
@@ -204,15 +204,19 @@
 
   // ---------- model ----------
   function modelView() {
+    var unc = R.categories.filter(function (c) { return c.raw_median !== null; }).map(function (c) { return { category: c.category, n: c.n, raw_median: c.raw_median, unc: c.weight * c.raw_median + (1 - c.weight) * R.global_median }; });
+    var over = unc.filter(function (c) { return c.unc > R.multiple_cap; }).sort(function (a, b) { return b.unc - a.unc; });
+    var below = unc.filter(function (c) { return c.unc <= R.multiple_cap; }).reduce(function (m, c) { return Math.max(m, c.unc); }, 0);
     var withPeers = R.categories.filter(function (c) { return c.n > 0; }).sort(function (a, b) { return b.n - a.n || (a.category < b.category ? -1 : 1); }).slice(0, 8);
     app.innerHTML = '<article class="prose">' +
       '<h2>What the board is</h2><p>Each pre-token protocol gets an <b>implied value</b>: what the market might pay for its token, estimated from how already-tokenised protocols trade against their TVL. Every input is a number in the snapshot (TVL, 7-day TVL change, listing date, chains, and the market caps of live-token peers); no protocol is named in the code. It is a screening heuristic for ordering, not a price forecast.</p>' +
       '<div class="formula">implied = round( TVL × category_multiple × growth × maturity × chain )\nclamped to [1, 1e14]; ranked by implied desc, ties by slug asc</div>' +
       '<h2>Category multiple</h2><p>For every live-token protocol with TVL &gt; 0, take mcap / TVL. The raw category value is the <b>median</b> of that ratio within the category. The global median over all live-token protocols is ' + R.global_median.toFixed(4) + '. Thin categories are shrunk toward it:</p>' +
-      '<div class="formula">w = n / (n + ' + C.shrink_k + ')                 n = live-token peers in the category\nmultiple = clamp( w × raw_median + (1 − w) × global_median, ' + C.multiple_min.toFixed(2) + ', ' + C.multiple_max.toFixed(2) + ' )</div>' +
-      '<p>With n = 0 the multiple is the global median; n = 5 gives half weight to the category. Categories with the most peers:</p>' +
+      '<div class="formula">w = n / (n + ' + C.shrink_k + ')                 n = live-token peers in the category\nmultiple = clamp( w × raw_median + (1 − w) × global_median, ' + C.multiple_min.toFixed(2) + ', ' + R.multiple_cap.toFixed(2) + ' )</div>' +
+      '<p>With n = 0 the multiple is the global median; n = ' + C.shrink_k + ' gives half weight to the category, so a category with one or two peers stays close to the global median. Categories with the most peers:</p>' +
       '<table><thead><tr><th class="plain">Category</th><th class="plain n">peers n</th><th class="plain n">raw median</th><th class="plain n">weight</th><th class="plain n">multiple</th></tr></thead><tbody>' +
       withPeers.map(function (c) { return '<tr><td>' + esc(c.category) + '</td><td class="n">' + c.n + '</td><td class="n">' + c.raw_median.toFixed(3) + '</td><td class="n">' + c.weight.toFixed(3) + '</td><td class="n">' + c.multiple.toFixed(3) + '</td></tr>'; }).join('') + '</tbody></table>' +
+      '<h2>Why the upper clamp is ' + R.multiple_cap.toFixed(2) + '</h2><p>The cap is not a hand-picked constant: it is the ' + (C.multiple_cap_quantile * 100) + 'th percentile of individual live-token mcap / TVL ratios in this snapshot, so no category is valued above what nine in ten live tokens trade at. Before clamping, ' + over.length + ' categor' + (over.length === 1 ? 'y' : 'ies') + (over.length ? ' (' + over.map(function (c) { return esc(c.category) + ', n = ' + c.n + ', raw ' + c.raw_median.toFixed(1) + ', shrunk ' + c.unc.toFixed(2); }).join('; ') + ')' : '') + ' exceed' + (over.length === 1 ? 's' : '') + ' it; the highest multiple below the cap is ' + below.toFixed(2) + '. Removing the cap would let that thin-sample outlier set a category multiple of ' + (over.length ? over[0].unc.toFixed(1) : '') + ' and dominate the board on one protocol. The floor stays ' + C.multiple_min.toFixed(2) + '.</p>' +
       '<h2>Growth, maturity, chain</h2>' +
       '<div class="formula">growth   = 1 + clamp(change_7d, ' + C.growth_floor + ', ' + C.growth_cap + ') / 100 × ' + C.growth_weight + '      (null change counts as 0)\nmaturity = ' + C.maturity_floor + ' + ' + C.maturity_range + ' × min(age_days, ' + C.maturity_days + ') / ' + C.maturity_days + '   (age from listed_at to as_of; unknown = ' + C.unknown_age_days + ' days)\nchain    = 1 + ' + C.chain_step + ' × clamp(chains − 1, 0, ' + C.chain_max_extra + ')</div>' +
       '<p>So growth ranges from ' + (1 + C.growth_floor / 100 * C.growth_weight).toFixed(2) + ' to ' + (1 + C.growth_cap / 100 * C.growth_weight).toFixed(2) + ', maturity from ' + C.maturity_floor + ' (just listed) to ' + (C.maturity_floor + C.maturity_range).toFixed(1) + ' (three years or more), and chain from 1.00 to ' + (1 + C.chain_step * C.chain_max_extra).toFixed(2) + '. Age is measured against the snapshot date (' + R.as_of + '), never the current clock.</p>' +
