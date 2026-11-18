@@ -26,6 +26,24 @@
     var cls = v > 0.05 ? 'up' : v < -0.05 ? 'down' : 'flat';
     return '<span class="chg ' + cls + '">' + (v > 0 ? '+' : '') + v.toFixed(1) + '%</span>';
   }
+  // v6 drivers: precomputed in the build (r.drivers); the browser only formats them.
+  var MISS = '<span class="ev-miss" title="Data not in snapshot">—</span>';
+  function fMult(v, cap) { if (v === null || v === undefined) return null; return (cap && v > 999) ? '>999x' : (v < 1 ? v.toFixed(2) : v < 100 ? v.toFixed(1) : String(Math.round(v))) + 'x'; }
+  function fGrow(v, d) { if (v === null || v === undefined) return null; var t = Math.abs(v).toFixed(d || 0); if (!d) t = t.replace(/\B(?=(\d{3})+$)/g, ','); return (v < 0 && Number(t) !== 0 ? '-' : '+') + t + '%'; }
+  function fAge(d) { return d === null || d === undefined ? null : d < 365 ? d + 'd' : (d / 365).toFixed(1) + 'y'; }
+  function evMult(r) {
+    var D = r.drivers, t = fMult(D.mult, 1); if (t === null) return '<td class="ev">' + MISS + '</td>';
+    var cls = D.mult < 1 ? 'm-lo' : D.mult < 10 ? '' : D.mult < 50 ? 'm-mid' : 'm-hi';
+    return '<td class="ev ' + cls + '" title="' + esc('Multiple: Implied FDV ' + usd(r.implied_value_usd) + ' / TVL ' + usd(r.tvl_usd) + ' = ' + fMult(D.mult) + ' T. Peer median (' + cat(r) + '): ' + D.mult_peer_median.toFixed(2) + 'x T.') + '">' + t + ' T</td>';
+  }
+  function evGrow(r) {
+    var D = r.drivers, t = fGrow(D.growth_pct); if (t === null) return '<td class="ev">' + MISS + '</td>';
+    return '<td class="ev ' + (t === '+0%' ? 'g-0' : D.growth_pct > 0 ? 'g-up' : 'g-dn') + '" title="' + esc('7d change in TVL: ' + fGrow(D.growth_pct, 1) + ' (' + usd(D.growth_start) + ' to ' + usd(D.growth_end) + '). Same base as Multiple (TVL).') + '">' + t + '</td>';
+  }
+  function evAge(r) {
+    var D = r.drivers, t = fAge(D.age_days); if (t === null) return '<td class="ev">' + MISS + '</td>';
+    return '<td class="ev" title="' + esc('Age: ' + D.age_days + ' days from listing ' + D.age_launch_date + ' to snapshot ' + R.as_of + '. Age factor ' + D.age_factor.toFixed(2) + 'x.') + '"><i class="ab" style="height:' + (Math.min(D.age_days / 730, 1) * 12).toFixed(1) + 'px"></i>' + t + '</td>';
+  }
   function badge(rk) {
     var c = rk <= 3 ? ' t' + rk : rk <= 10 ? ' t10' : '';
     return '<span class="badge' + c + '">' + rk + '</span>';
@@ -48,18 +66,19 @@
   function cmp(key, dir) {
     return function (a, b) {
       var va = a[key], vb = b[key];
-      if (va === null || va === undefined) va = dir === 'asc' ? Infinity : -Infinity;
-      if (vb === null || vb === undefined) vb = dir === 'asc' ? Infinity : -Infinity;
+      var dv = DRV[key] === 1;
+      if (va === null || va === undefined) va = dir === 'asc' && !dv ? Infinity : -Infinity;
+      if (vb === null || vb === undefined) vb = dir === 'asc' && !dv ? Infinity : -Infinity;
       if (typeof va === 'string') { va = va.toLowerCase(); vb = String(vb).toLowerCase(); }
       var d = va < vb ? -1 : va > vb ? 1 : 0;
       if (dir === 'desc') d = -d;
-      return d || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0);
+      return d || (dv && a.rank !== undefined ? a.rank - b.rank : 0) || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0);
     };
   }
   function head(cols, st) {
     return '<thead><tr>' + cols.map(function (c) {
       var on = st.key === c[0], s = on ? ' aria-sort="' + (st.dir === 'asc' ? 'ascending' : 'descending') + '"' : '';
-      return '<th class="' + (c[2] ? 'n' : '') + '"' + s + '><button data-sort="' + c[0] + '">' + c[1] + '</button></th>';
+      return '<th class="' + (c[2] ? 'n' : '') + (c[3] ? ' ev' : '') + '"' + (c[3] ? ' title="' + esc(c[3]) + '"' : '') + s + '><button data-sort="' + c[0] + '">' + c[1] + '</button></th>';
     }).join('') + '</tr></thead>';
   }
   function bindSort(st, redraw) {
@@ -75,8 +94,9 @@
 
   // ---------- board ----------
   var B = { key: 'rank', dir: 'asc', q: '', cat: '', chain: '', scope: 'all' };
-  var BCOLS = [['rank', 'Rank'], ['name', 'Name'], ['category', 'Category'], ['chains_n', 'Chains'], ['tvl_usd', 'TVL', 1], ['change_7d', '7d growth', 1], ['implied_value_usd', 'Implied value', 1]];
-  rows.forEach(function (r) { r.chains_n = r.chains.length; });
+  var BCOLS = [['rank', 'Rank'], ['name', 'Name'], ['category', 'Category'], ['chains_n', 'Chains'], ['tvl_usd', 'TVL', 1], ['change_7d', '7d growth', 1], ['implied_value_usd', 'Implied value', 1], ['mult', 'Mult', 1, 'Mult: Implied FDV / TVL (T = TVL)'], ['growth_pct', '7d Δ', 1, '7d Δ: change in the same base (TVL), last 7 days'], ['age_days', 'Age', 1, 'Age: days since listing (snapshot date)']];
+  rows.forEach(function (r) { r.chains_n = r.chains.length; r.mult = r.drivers.mult; r.growth_pct = r.drivers.growth_pct; r.age_days = r.drivers.age_days; });
+  var DRV = { mult: 1, growth_pct: 1, age_days: 1 };
 
   function boardView() {
     var early = R.extra_size;
@@ -138,6 +158,20 @@
     var p = Math.max(0, Math.min(100, ((v - lo) / (hi - lo)) * 100));
     return '<div class="track" title="range ' + lo + ' to ' + hi + '"><i style="left:' + p.toFixed(1) + '%"></i></div>';
   }
+  function whyStrip(r) {
+    var D = r.drivers, s = catStat[cat(r)], mu = fMult(D.mult), gr = fGrow(D.growth_pct, 1), ag = fAge(D.age_days);
+    var ratio = D.mult !== null ? D.mult / D.mult_peer_median : null;
+    var card = function (lbl, big, lines, note) { return '<div class="why"><span>' + lbl + '</span><b>' + big + '</b>' + lines.map(function (l) { return '<small>' + esc(l) + '</small>'; }).join('') + '<em>' + esc(note) + '</em></div>'; };
+    var take = 'Ranks #' + r.rank + ' because it is a ' + (D.age_days !== null && D.age_days >= 365 ? 'proven' : D.age_days !== null && D.age_days < 90 ? 'very young' : 'maturing') + ' ' + cat(r) + ' protocol' +
+      (D.age_days !== null ? ' (' + fAge(D.age_days) + ')' : '') + (gr !== null ? (D.growth_pct < 0 ? ' despite shrinking ' + fGrow(D.growth_pct) : ' with TVL ' + fGrow(D.growth_pct) + ' over 7d') : ' with no 7d reading') +
+      (mu !== null ? ', valued at ' + mu + ' TVL (' + ratio.toFixed(2) + '× its peer multiple' + (ratio > 1.3 ? ', trading at a premium to peers' : '') + ')' : '') +
+      (D.age_days !== null && D.age_days < 90 ? '; very young, so the age factor (' + D.age_factor.toFixed(2) + '×) penalises it' : '') + '.';
+    return '<div class="whyrow">' +
+      card('Multiple', mu === null ? '—' : mu + ' T', ['Implied value ' + usd(r.implied_value_usd), 'Base (TVL) ' + usd(r.tvl_usd), 'Peer multiple (' + cat(r) + ') ' + D.mult_peer_median.toFixed(2) + 'x T', 'Global median ' + D.mult_category_median.toFixed(2) + 'x T'], ratio === null ? 'Data not in snapshot' : 'Multiple is ' + ratio.toFixed(2) + '× the category peer multiple (read-only, precomputed).') +
+      card('Growth', gr === null ? '—' : gr + ' / 7d', gr === null ? ['Data not in snapshot'] : ['Start (7d ago) ' + usd(D.growth_start) + ' TVL', 'End (snapshot) ' + usd(D.growth_end) + ' TVL', 'Window: 7d, fixed (snapshot has no 30d)'], 'Growth factor ' + r.model.growth_multiplier.toFixed(3) + '× (change clamped to ' + C.growth_floor + '..' + C.growth_cap + '%).') +
+      card('Age', ag === null ? '—' : D.age_days + 'd' + (D.age_days >= 365 ? ' (' + ag + ')' : ''), ['Listed ' + (D.age_launch_date || 'unknown'), 'Snapshot ' + R.as_of + ' (fixed)', 'Age factor ' + D.age_factor.toFixed(2) + '× (full at ' + C.maturity_days + 'd)'], D.age_days === null ? 'Listing date missing: ' + C.unknown_age_days + ' days assumed.' : D.age_days >= C.maturity_days ? 'At cap: no age penalty.' : 'Below ' + C.maturity_days + ' days: age factor under the cap.') +
+      '</div><p class="take">' + esc(take) + '</p>';
+  }
   function detailView(slug) {
     var r = bySlug[slug];
     if (!r) { app.innerHTML = '<div class="empty">Unknown protocol. <a href="#board">Back to board</a></div>'; return; }
@@ -154,6 +188,7 @@
       '<button class="back" id="bk">← Back to board</button>' +
       '<div class="dh">' + badge(r.rank) + '<h2>' + esc(r.name) + '</h2>' + (r.watchlist ? '<span class="tag wl">watchlist</span>' : '<span class="tag">early</span>') + '<span class="tag">pre-token</span>' +
       '<div class="big"><b>' + usd(r.implied_value_usd) + '</b><span>implied value · rank ' + r.rank + ' of ' + rows.length + '</span></div></div>' +
+      whyStrip(r) +
       '<div class="grid2"><div>' +
       '<div class="card"><h3>Model breakdown · radar-2</h3><table class="bd"><tbody>' +
       line('', 'TVL', 'DefiLlama snapshot, ' + R.as_of, full(r.tvl_usd)) +

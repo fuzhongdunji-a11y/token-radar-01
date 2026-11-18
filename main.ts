@@ -2,6 +2,7 @@
 // data.js, dashboard/, screenshots/ and, last, dossier.json. Node 22 standard library only, no clock, no randomness.
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../kit/token-radar-01-kit/input/snapshot.json
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { boardIssue, buildRadar, dataScript, parseSnapshot } from './lib/model.ts';
@@ -32,6 +33,19 @@ const issue = boardIssue(board, snapshot);
 if (issue !== null) {
   process.stderr.write(`token radar: the board fails the gate: ${issue}\n`);
   process.exit(1);
+}
+
+// v6 invariant: the display drivers must not move the ranking. The ordered (slug, implied) pairs of the pre-v6 build are pinned
+// by snapshot hash in lib/reference-order.json; board.json must also equal the driver-free rows.
+const refFile = join(here, 'lib', 'reference-order.json');
+const order = JSON.stringify(board.map((r) => [r.slug, r.implied_value_usd]));
+if (JSON.stringify(radar.rows.map(({ drivers: _d, ...r }) => r)) !== JSON.stringify(board)) throw new Error('drivers changed board rows');
+if (existsSync(refFile)) {
+  const ref = JSON.parse(readFileSync(refFile, 'utf8')) as { snapshot_sha256: string; order: string };
+  if (ref.snapshot_sha256 === createHash('sha256').update(readFileSync(inputFile)).digest('hex') && ref.order !== order) {
+    process.stderr.write('token radar: (id, implied_fdv) order differs from the pre-v6 reference\n');
+    process.exit(1);
+  }
 }
 
 mkdirSync(out, { recursive: true });

@@ -159,12 +159,30 @@ export function farmPlan(p: Protocol, f: Factors, implied: number): string[] {
   return steps;
 }
 
+// ---- display-only drivers (v6): precomputed here, only formatted in the browser; never fed back into the model ----
+export interface Drivers {
+  mult: number | null; mult_basis: 'T'; mult_peer_median: number; mult_category_median: number;
+  growth_pct: number | null; growth_start: number | null; growth_end: number | null;
+  age_days: number | null; age_launch_date: string | null; age_factor: number;
+}
+/** mult = implied / TVL (the snapshot's only base metric); growth = reported 7-day TVL change (no 30-day field exists); age against as_of. */
+export function driversOf(r: BoardRow, globalMedian: number): Drivers {
+  const c = r.change_7d;
+  return {
+    mult: r.tvl_usd > 0 ? r.implied_value_usd / r.tvl_usd : null, mult_basis: 'T',
+    mult_peer_median: r.model.category_multiple, mult_category_median: globalMedian,
+    growth_pct: c, growth_start: c !== null && c > -100 ? r.tvl_usd / (1 + c / 100) : null, growth_end: c !== null ? r.tvl_usd : null,
+    age_days: r.model.age_days, age_launch_date: r.listed_at, age_factor: r.model.maturity_multiplier,
+  };
+}
+export type RadarRow = BoardRow & { drivers: Drivers };
+
 // ---- board ----
 export interface Radar {
   as_of: string; source: string; floor_usd: number; model_version: string; constants: typeof MODEL;
   global_median: number; categories: CategoryStat[];
   watchlist_size: number; board_size: number; extra_size: number; live_size: number;
-  rows: BoardRow[]; live: LiveRow[];
+  rows: RadarRow[]; live: LiveRow[];
 }
 
 export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Radar } {
@@ -199,7 +217,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     as_of: snapshot.as_of, source: snapshot.source, floor_usd: snapshot.floor_usd, model_version: MODEL.version, constants: MODEL,
     global_median: table.global_median, categories: table.stats,
     watchlist_size: wl.size, board_size: board.length, extra_size: board.filter((r) => !r.watchlist).length, live_size: live.length,
-    rows: board, live,
+    rows: board.map((r) => ({ ...r, drivers: driversOf(r, table.global_median) })), live,
   };
   return { board, radar };
 }
