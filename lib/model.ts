@@ -138,7 +138,11 @@ export function capitalFor(tvl: number): number { return tvl < 25e6 ? 50 : tvl <
 export function holdDaysFor(age: number | null): number { const a = age ?? MODEL.unknown_age_days; return a < 90 ? 14 : a < 365 ? 30 : a < 1095 ? 45 : 60; }
 const fmtM = (n: number) => (n >= 1e9 ? `$${(n / 1e9).toFixed(2)}B` : `$${(n / 1e6).toFixed(1)}M`);
 
-export function farmPlan(p: Protocol, f: Factors, implied: number): string[] {
+/** One farm step: the sentence plus the numbers that sentence is built from (cash principal, sunk fee, active minutes). */
+export interface FarmStep { text: string; cap: number; additive: boolean; fee: number; mins: number }
+const cents = (n: number) => Math.round(n * 100) / 100;
+
+export function farmSteps(p: Protocol, f: Factors, implied: number): FarmStep[] {
   const kit = kitFor(p.category);
   const chain = p.chains[0] ?? 'its main chain';
   const cap = capitalFor(p.tvl_usd), hold = holdDaysFor(f.age_days);
@@ -147,16 +151,76 @@ export function farmPlan(p: Protocol, f: Factors, implied: number): string[] {
   const trend = p.change_7d === null ? 'no 7-day TVL reading' : `TVL ${p.change_7d >= 0 ? '+' : ''}${p.change_7d.toFixed(1)}% over 7 days`;
   const ageTxt = f.age_days === null ? 'unknown listing age' : `${f.age_days} days tracked`;
   const hold2 = Math.max(7, Math.round(hold / 2));
-  const steps = [
-    `Scope ${p.name} (${p.category ?? 'uncategorised'}): ${fmtM(p.tvl_usd)} TVL on ${chain}, ${trend}, ${ageTxt}. Model value ${fmtM(implied)}. Read the docs and last 20 transactions and confirm the app is live and there is no token yet. Cost: $0. Time: 30 min.`,
-    `Fund a fresh ${chain} wallet with $${cap} of stable capital plus about $${gas} of native gas for ${p.name}. Keep it separate from main funds so activity stays attributable. Cost: $${cap + gas} deployed ($${gas} gas, recoverable principal). Time: 20 min.`,
-    `First action on ${p.name}: ${kit.act} with $${slice} (${kit.ask}). Check the quote before signing and keep slippage under 0.5%. Cost: about $${(gas * 0.4).toFixed(2)} gas plus fees. Time: 15 min.`,
-    `Add a second, different action on ${p.name} using $${reserve - Math.round(reserve / 2)}, such as a withdrawal and re-entry, so the wallet shows more than one kind of ${kit.verb}. Cost: about $${(gas * 0.5).toFixed(2)} gas. Time: 15 min.`,
-    `Repeat ${kit.verb} on ${p.name} weekly: 3 rounds of $${Math.max(5, Math.round(cap * 0.1))} or less, spaced 7 days apart, to build a steady record rather than one burst. Cost: about $${(gas * 1.2).toFixed(2)} gas across the rounds. Time: 10 min per round, 3 weeks.`,
-    `Keep the position open for ${hold} days (the hold for ${f.age_days === null ? 'an unknown-age' : f.age_days + '-day-old'} protocols). Check at day ${hold2} and exit if TVL drops below ${fmtM(p.tvl_usd * 0.6)}. Cost: $0 beyond the opportunity cost of $${cap} locked. Time: 5 min per check, ${hold} days elapsed.`,
-    `Exit ${p.name}: withdraw everything, record the cost basis (about $${Math.round(gas * 3)} gas in total), and screenshot the wallet's history. Watch the protocol's announcements for a points programme or claim page. Cost: about $${gas} gas. Time: 20 min.`,
+  const slice2 = reserve - Math.round(reserve / 2), roundCap = Math.max(5, Math.round(cap * 0.1));
+  const steps: FarmStep[] = [
+    { cap: 0, additive: false, fee: 0, mins: 30, text: `Scope ${p.name} (${p.category ?? 'uncategorised'}): ${fmtM(p.tvl_usd)} TVL on ${chain}, ${trend}, ${ageTxt}. Model value ${fmtM(implied)}. Read the docs and last 20 transactions and confirm the app is live and there is no token yet. Cost: $0. Time: 30 min.` },
+    { cap: cap + gas, additive: false, fee: 0, mins: 20, text: `Fund a fresh ${chain} wallet with $${cap} of stable capital plus about $${gas} of native gas for ${p.name}. Keep it separate from main funds so activity stays attributable. Cost: $${cap + gas} deployed ($${gas} gas, recoverable principal). Time: 20 min.` },
+    { cap: slice, additive: false, fee: cents(gas * 0.4), mins: 15, text: `First action on ${p.name}: ${kit.act} with $${slice} (${kit.ask}). Check the quote before signing and keep slippage under 0.5%. Cost: about $${(gas * 0.4).toFixed(2)} gas plus fees. Time: 15 min.` },
+    { cap: slice2, additive: false, fee: cents(gas * 0.5), mins: 15, text: `Add a second, different action on ${p.name} using $${slice2}, such as a withdrawal and re-entry, so the wallet shows more than one kind of ${kit.verb}. Cost: about $${(gas * 0.5).toFixed(2)} gas. Time: 15 min.` },
+    { cap: roundCap, additive: false, fee: cents(gas * 1.2), mins: 30, text: `Repeat ${kit.verb} on ${p.name} weekly: 3 rounds of $${roundCap} or less, spaced 7 days apart, to build a steady record rather than one burst. Cost: about $${(gas * 1.2).toFixed(2)} gas across the rounds. Time: 10 min per round, 3 weeks.` },
+    { cap: 0, additive: false, fee: 0, mins: 5, text: `Keep the position open for ${hold} days (the hold for ${f.age_days === null ? 'an unknown-age' : f.age_days + '-day-old'} protocols). Check at day ${hold2} and exit if TVL drops below ${fmtM(p.tvl_usd * 0.6)}. Cost: $0 beyond the opportunity cost of $${cap} locked. Time: 5 min per check, ${hold} days elapsed.` },
+    { cap: 0, additive: false, fee: gas, mins: 20, text: `Exit ${p.name}: withdraw everything, record the cost basis (about $${Math.round(gas * 3)} gas in total), and screenshot the wallet's history. Watch the protocol's announcements for a points programme or claim page. Cost: about $${gas} gas. Time: 20 min.` },
   ];
   return steps;
+}
+export const farmPlan = (p: Protocol, f: Factors, implied: number): string[] => farmSteps(p, f, implied).map((s) => s.text);
+
+// ---- execution economics (data.js only; bound to the step parameters, not parsed out of the prose) ----
+export interface EconStep { n: number; cap_usd: number; reused: boolean; additive: boolean; fee_usd: number; mins: number }
+export interface Econ { peak_cap_usd: number; total_fee_usd: number; total_mins: number; cadence: 'one-shot' | 'weekly' | 'biweekly' | 'monthly'; steps: EconStep[] }
+export type RadarRow = BoardRow & { tvl_7d_pct: number | null; econ: Econ };
+export type RadarLive = LiveRow & { tvl_7d_pct: number | null };
+
+/** 7-day TVL change in percentage points, as the snapshot reports it (change_7d), to 1 decimal; null when absent. */
+export function tvl7d(p: { change_7d: number | null }): number | null {
+  if (p.change_7d === null || !Number.isFinite(p.change_7d)) return null;
+  const v = Math.round(p.change_7d * 10) / 10;
+  return v === 0 ? 0 : v;
+}
+export function cadenceOf(steps: string[]): Econ['cadence'] {
+  const t = steps.join('\n').toLowerCase();
+  if (/weekly|every 7 days/.test(t)) return 'weekly';
+  if (/biweekly|every 2 weeks|every 14 days/.test(t)) return 'biweekly';
+  if (/monthly|every 30 days/.test(t)) return 'monthly';
+  return 'one-shot';
+}
+/** Peak working capital: recycled principal never raises the peak, additive reserves stack, zero-cash steps leave it alone. */
+export function buildEcon(steps: FarmStep[]): Econ {
+  let peak = 0;
+  const out: EconStep[] = steps.map((s, i) => {
+    let reused = false;
+    if (s.cap === 0) { /* peak unchanged */ }
+    else if (s.additive) peak += s.cap;
+    else if (s.cap <= peak && peak > 0) reused = true;
+    else peak = s.cap;
+    return { n: i + 1, cap_usd: s.cap, reused, additive: s.additive, fee_usd: cents(s.fee), mins: s.mins };
+  });
+  return {
+    peak_cap_usd: Math.round(peak), total_fee_usd: cents(out.reduce((a, s) => a + s.fee_usd, 0)),
+    total_mins: out.reduce((a, s) => a + s.mins, 0), cadence: cadenceOf(steps.map((s) => s.text)), steps: out,
+  };
+}
+/** Build-time reconciliation: the numbers must agree with the figures printed inside the farm_steps sentences. Throws on any mismatch. */
+export function assertEcon(slug: string, texts: string[], e: Econ): void {
+  const fail = (m: string): never => { throw new Error(`econ ${slug}: ${m}`); };
+  if (e.steps.length !== texts.length) fail(`${e.steps.length} econ steps vs ${texts.length} farm steps`);
+  if (e.total_fee_usd !== cents(e.steps.reduce((a, s) => a + s.fee_usd, 0))) fail('fee total');
+  if (e.total_mins !== e.steps.reduce((a, s) => a + s.mins, 0)) fail('minutes total');
+  const num = (t: string, re: RegExp) => { const m = re.exec(t); return m === null ? null : Number(m[1]); };
+  e.steps.forEach((s, i) => {
+    const t = texts[i]!;
+    if (s.n !== i + 1) fail(`step number ${s.n} at ${i}`);
+    const rounds = num(t, /(\d+) rounds of/) ?? 1;
+    const perMin = num(t, /Time: (\d+) min/);
+    if (perMin === null || perMin * rounds !== s.mins) fail(`step ${s.n} minutes ${s.mins} vs "${perMin}" x ${rounds}`);
+    const feeTxt = /Cost: about \$(\d+(?:\.\d+)?) gas/.exec(t);
+    if (feeTxt === null ? s.fee_usd !== 0 && !/deployed/.test(t) : Math.abs(Number(feeTxt[1]) - s.fee_usd) > 1e-9) fail(`step ${s.n} fee ${s.fee_usd}`);
+    if (feeTxt === null && s.fee_usd !== 0) fail(`step ${s.n} fee ${s.fee_usd} not in text`);
+    const capTxt = num(t, /Cost: \$(\d+) deployed/) ?? num(t, /with \$(\d+) \(/) ?? num(t, /using \$(\d+),/) ?? num(t, /rounds of \$(\d+)/);
+    if ((capTxt ?? 0) !== s.cap_usd) fail(`step ${s.n} capital ${s.cap_usd} vs text ${capTxt}`);
+  });
+  const peak = Math.max(0, ...e.steps.map((s) => s.cap_usd));
+  if (e.steps.every((s) => !s.additive) && e.peak_cap_usd !== peak) fail('peak');
 }
 
 // ---- board ----
@@ -164,7 +228,7 @@ export interface Radar {
   as_of: string; source: string; floor_usd: number; model_version: string; constants: typeof MODEL;
   global_median: number; categories: CategoryStat[];
   watchlist_size: number; board_size: number; extra_size: number; live_size: number;
-  rows: BoardRow[]; live: LiveRow[];
+  rows: RadarRow[]; live: RadarLive[];
 }
 
 export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Radar } {
@@ -191,15 +255,22 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     mcap_usd: null, listed_at: p.listed_at, token_status: 'pre-token', watchlist: wl.has(p.slug), implied_value_usd: implied,
     model: f, farm_steps: farmPlan(p, f, implied),
   }));
-  const live: LiveRow[] = snapshot.protocols.filter(isLive).sort((a, b) => b.mcap_usd! - a.mcap_usd! || bySlug(a, b)).map((p) => ({
+  const plans = ranked.map(({ p, f, implied }) => farmSteps(p, f, implied));
+  const rows: RadarRow[] = board.map((r, i) => {
+    const econ = buildEcon(plans[i]!);
+    assertEcon(r.slug, r.farm_steps, econ);
+    return { ...r, tvl_7d_pct: tvl7d(r), econ };
+  });
+  rows.forEach((r, i) => { const b = board[i]!; if (r.slug !== b.slug || r.rank !== b.rank || r.implied_value_usd !== b.implied_value_usd || r.farm_steps !== b.farm_steps) throw new Error(`data.js row ${i + 1} diverges from board.json`); });
+  const live: RadarLive[] = snapshot.protocols.filter(isLive).sort((a, b) => b.mcap_usd! - a.mcap_usd! || bySlug(a, b)).map((p) => ({
     slug: p.slug, name: p.name, category: p.category, chains: p.chains, tvl_usd: p.tvl_usd, change_7d: p.change_7d, mcap_usd: p.mcap_usd!,
-    mcap_tvl: p.tvl_usd > 0 ? p.mcap_usd! / p.tvl_usd : 0, listed_at: p.listed_at, symbol: p.symbol,
+    mcap_tvl: p.tvl_usd > 0 ? p.mcap_usd! / p.tvl_usd : 0, listed_at: p.listed_at, symbol: p.symbol, tvl_7d_pct: tvl7d(p),
   }));
   const radar: Radar = {
     as_of: snapshot.as_of, source: snapshot.source, floor_usd: snapshot.floor_usd, model_version: MODEL.version, constants: MODEL,
     global_median: table.global_median, categories: table.stats,
     watchlist_size: wl.size, board_size: board.length, extra_size: board.filter((r) => !r.watchlist).length, live_size: live.length,
-    rows: board, live,
+    rows, live,
   };
   return { board, radar };
 }

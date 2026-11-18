@@ -21,10 +21,17 @@
   }
   function full(n) { return '$' + Math.round(n).toLocaleString('en-US'); }
   function x(n, d) { return '×' + n.toFixed(d || 3); }
+  function fmtPct(n) { return n === null || n === undefined ? '—' : (n > 0 ? '+' : '') + n.toFixed(1) + '%'; }
+  function fmtCap(n) { return n === null || n === undefined ? '—' : n < 1000 ? '$' + Math.round(n) : '$' + (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K'; }
+  function fmtFee(n) { return n === null || n === undefined ? '—' : '$' + n.toFixed(2); }
   function chg(v) {
     if (v === null || v === undefined) return '<span class="flat">—</span>';
-    var cls = v > 0.05 ? 'up' : v < -0.05 ? 'down' : 'flat';
-    return '<span class="chg ' + cls + '">' + (v > 0 ? '+' : '') + v.toFixed(1) + '%</span>';
+    return '<span class="chg ' + (v > 0 ? 'up' : v < 0 ? 'down' : 'flat') + '">' + fmtPct(v) + '</span>';
+  }
+  function med(xs) {
+    if (!xs.length) return null;
+    var a = xs.slice().sort(function (p, q) { return p - q; }), m = a.length >> 1;
+    return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
   }
   function badge(rk) {
     var c = rk <= 3 ? ' t' + rk : rk <= 10 ? ' t10' : '';
@@ -45,37 +52,72 @@
   function opts(pairs, all) {
     return '<option value="">' + all + '</option>' + pairs.map(function (p) { return '<option value="' + esc(p[0]) + '">' + esc(p[0]) + ' (' + p[1] + ')</option>'; }).join('');
   }
-  function cmp(key, dir) {
+  function val(r, key) {
+    var v = key === 'peak' ? r.econ.peak_cap_usd : key === 'fee' ? r.econ.total_fee_usd : key === 'mins' ? r.econ.total_mins : r[key];
+    if (typeof v === 'string') v = v.toLowerCase();
+    return v === undefined || v === null || (typeof v === 'number' && !isFinite(v)) ? null : v;
+  }
+  // null / non-finite always last, either direction; ties: rank asc (board) or mcap desc (live), then slug code units
+  function cmp(key, dir, live) {
     return function (a, b) {
-      var va = a[key], vb = b[key];
-      if (va === null || va === undefined) va = dir === 'asc' ? Infinity : -Infinity;
-      if (vb === null || vb === undefined) vb = dir === 'asc' ? Infinity : -Infinity;
-      if (typeof va === 'string') { va = va.toLowerCase(); vb = String(vb).toLowerCase(); }
-      var d = va < vb ? -1 : va > vb ? 1 : 0;
-      if (dir === 'desc') d = -d;
+      var va = val(a, key), vb = val(b, key), d = 0;
+      if (va === null || vb === null) { if (va !== vb) return va === null ? 1 : -1; }
+      else { d = va < vb ? -1 : va > vb ? 1 : 0; if (dir === 'desc') d = -d; }
+      if (!d) d = live ? b.mcap_usd - a.mcap_usd : a.rank - b.rank;
       return d || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0);
     };
   }
   function head(cols, st) {
     return '<thead><tr>' + cols.map(function (c) {
       var on = st.key === c[0], s = on ? ' aria-sort="' + (st.dir === 'asc' ? 'ascending' : 'descending') + '"' : '';
-      return '<th class="' + (c[2] ? 'n' : '') + '"' + s + '><button data-sort="' + c[0] + '">' + c[1] + '</button></th>';
+      var two = c[3];
+      if (two && st.key === two[0]) s = ' aria-sort="' + (st.dir === 'asc' ? 'ascending' : 'descending') + '"';
+      return '<th class="' + (c[2] ? 'n' : '') + '"' + s + (c[4] ? ' title="' + c[4] + '"' : '') + '><button data-sort="' + c[0] + '" class="' + (two ? 'half ' : '') + (on ? 'on' : '') + '">' + c[1] + '</button>' +
+        (two ? '<button class="half' + (st.key === two[0] ? ' on' : '') + '" data-sort="' + two[0] + '">' + two[1] + '</button>' : '') + '</th>';
     }).join('') + '</tr></thead>';
   }
+  var ASC1 = ['rank', 'name', 'category', 'symbol', 'peak', 'fee', 'mins'];
   function bindSort(st, redraw) {
     app.querySelectorAll('[data-sort]').forEach(function (b) {
       b.onclick = function () {
         var k = b.getAttribute('data-sort');
         if (st.key === k) st.dir = st.dir === 'asc' ? 'desc' : 'asc';
-        else { st.key = k; st.dir = (k === 'rank' || k === 'name' || k === 'category') ? 'asc' : 'desc'; }
+        else { st.key = k; st.dir = ASC1.indexOf(k) >= 0 ? 'asc' : 'desc'; }
         redraw();
       };
     });
   }
 
   // ---------- board ----------
-  var B = { key: 'rank', dir: 'asc', q: '', cat: '', chain: '', scope: 'all' };
-  var BCOLS = [['rank', 'Rank'], ['name', 'Name'], ['category', 'Category'], ['chains_n', 'Chains'], ['tvl_usd', 'TVL', 1], ['change_7d', '7d growth', 1], ['implied_value_usd', 'Implied value', 1]];
+  var B0 = { key: 'rank', dir: 'asc', q: '', cat: '', chain: '', sig: 'all', cap: 0, mins: 0 };
+  var B = Object.assign({}, B0), L0 = { key: 'mcap_usd', dir: 'desc', q: '', cat: '', sig: 'all' };
+  var CAPS = [[0, 'Any', 'No peak capital limit'], [100, '≤ $100', 'Peak recoverable working capital up to $100'], [500, '≤ $500', 'Peak recoverable working capital up to $500'], [2000, '≤ $2K', 'Peak recoverable working capital up to $2,000']];
+  var TIMES = [[0, 'Any', 'No active execution time limit'], [120, '≤ 2h', 'Total active execution time up to 120 minutes'], [180, '≤ 3h', 'Total active execution time up to 180 minutes']];
+  var SIGS = [['all', 'All', ''], ['watch', 'Watchlist', 'Show only the ' + R.watchlist_size + ' tracked watchlist protocols'], ['early', 'Early', 'Show only eligible extra rows'], ['rise', '7d Rising', 'Show only protocols with strictly positive 7-day TVL growth (> 0%)']];
+  var BCOLS = [['rank', '#'], ['name', 'Name'], ['category', 'Category'], ['chains_n', 'Chains'], ['tvl_usd', 'TVL', 1], ['tvl_7d_pct', '7d Δ', 1, 0, '7-day snapshot TVL change'], ['implied_value_usd', 'Implied value', 1], ['peak', 'Peak Cap', 1, 0, 'Peak concurrent recoverable capital required'], ['fee', 'Fee', 1, ['mins', 'Time'], 'Fee: total sunk fee burn. Time: total active minutes']];
+  function seg(id, list, cur) {
+    return '<div class="seg" id="' + id + '">' + list.map(function (o) { return '<button data-v="' + o[0] + '" title="' + o[2] + '" aria-pressed="' + (cur === o[0]) + '">' + o[1] + '</button>'; }).join('') + '</div>';
+  }
+  function econBar(isLive) {
+    return '<div class="econ" id="econ">' + (isLive ? '' : '<span class="gl">Max capital</span>' + seg('sg-cap', CAPS, B.cap) + '<span class="gl">Max time</span>' + seg('sg-min', TIMES, B.mins)) +
+      '<span class="gl">Signal</span>' + seg('sg-sig', isLive ? [SIGS[0], SIGS[3]] : SIGS, isLive ? L.sig : B.sig) +
+      '<span class="ro" id="ro"></span><button class="ghost" id="rst">Reset View</button></div>';
+  }
+  function bindEcon(st, redraw, base) {
+    [['sg-cap', 'cap'], ['sg-min', 'mins'], ['sg-sig', 'sig']].forEach(function (g) {
+      var el = document.getElementById(g[0]);
+      if (!el) return;
+      el.querySelectorAll('button').forEach(function (b) {
+        b.onclick = function () {
+          var v = b.getAttribute('data-v');
+          st[g[1]] = g[1] === 'sig' ? v : Number(v);
+          el.querySelectorAll('button').forEach(function (o) { o.setAttribute('aria-pressed', o === b); });
+          redraw();
+        };
+      });
+    });
+    document.getElementById('rst').onclick = function () { Object.assign(st, base); redraw(true); };
+  }
   rows.forEach(function (r) { r.chains_n = r.chains.length; });
 
   function boardView() {
@@ -89,8 +131,7 @@
       '<div class="bar"><input id="q" type="search" placeholder="Search name or slug" aria-label="Search" value="' + esc(B.q) + '">' +
       '<select id="fc" aria-label="Category">' + opts(uniq(rows, function (r) { return [cat(r)]; }), 'All categories') + '</select>' +
       '<select id="fh" aria-label="Chain">' + opts(uniq(rows, function (r) { return r.chains; }), 'All chains') + '</select>' +
-      '<div class="seg" id="sc">' + [['all', 'All'], ['watch', 'Watchlist'], ['early', 'Early']].map(function (s) { return '<button data-sc="' + s[0] + '" aria-pressed="' + (B.scope === s[0]) + '">' + s[1] + '</button>'; }).join('') + '</div>' +
-      '<span class="count" id="cnt"></span></div>' +
+      '<span class="count" id="cnt"></span></div>' + econBar(false) +
       '<div class="wrap"><table id="bt"></table></div>' +
       '<p class="hint">Click a row for the model breakdown and farm plan. Click a column header to sort. Rank is by implied value; ties break by slug. Pre-token only: live-token protocols are in their own tab.</p>';
     var fc = document.getElementById('fc'), fh = document.getElementById('fh'), q = document.getElementById('q');
@@ -98,34 +139,42 @@
     q.oninput = function () { B.q = q.value; drawBoard(); };
     fc.onchange = function () { B.cat = fc.value; drawBoard(); };
     fh.onchange = function () { B.chain = fh.value; drawBoard(); };
-    app.querySelectorAll('[data-sc]').forEach(function (b) {
-      b.onclick = function () {
-        B.scope = b.getAttribute('data-sc');
-        app.querySelectorAll('[data-sc]').forEach(function (o) { o.setAttribute('aria-pressed', o === b); });
-        drawBoard();
-      };
-    });
+    bindEcon(B, drawBoard, B0);
     drawBoard();
     document.querySelector('.wrap').scrollTop = B.scroll || 0;
   }
-  function drawBoard() {
+  function drawBoard(sync) {
+    if (sync) {
+      document.getElementById('q').value = B.q; document.getElementById('fc').value = B.cat; document.getElementById('fh').value = B.chain;
+      [['sg-cap', B.cap], ['sg-min', B.mins], ['sg-sig', B.sig]].forEach(function (g) {
+        document.getElementById(g[0]).querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', b.getAttribute('data-v') === String(g[1])); });
+      });
+    }
     var q = B.q.trim().toLowerCase();
     var list = rows.filter(function (r) {
-      if (B.scope === 'watch' && !r.watchlist) return false;
-      if (B.scope === 'early' && r.watchlist) return false;
+      if (B.sig === 'watch' && !r.watchlist) return false;
+      if (B.sig === 'early' && r.watchlist) return false;
+      if (B.sig === 'rise' && !(r.tvl_7d_pct > 0)) return false;
+      if (B.cap && r.econ.peak_cap_usd > B.cap) return false;
+      if (B.mins && r.econ.total_mins > B.mins) return false;
       if (B.cat && cat(r) !== B.cat) return false;
       if (B.chain && r.chains.indexOf(B.chain) < 0) return false;
       return !q || r.name.toLowerCase().indexOf(q) >= 0 || r.slug.indexOf(q) >= 0;
-    }).sort(cmp(B.key, B.dir));
+    }).sort(cmp(B.key, B.dir, false));
     document.getElementById('cnt').textContent = list.length + ' of ' + rows.length + ' rows';
+    var mc = med(list.map(function (r) { return r.econ.peak_cap_usd; })), mf = med(list.map(function (r) { return r.econ.total_fee_usd; }));
+    document.getElementById('ro').textContent = 'Showing ' + list.length + ' of ' + rows.length + ' pre-token' + (list.length ? ' · Med Cap ' + fmtCap(Math.round(mc)) + ' · Med Fee ' + fmtFee(Math.round(mf * 100) / 100) : '');
     var body = list.length ? list.map(function (r) {
       return '<tr tabindex="0" data-slug="' + esc(r.slug) + '"><td>' + badge(r.rank) + '</td>' +
         '<td class="nm"><b>' + esc(r.name) + '</b>' + (r.watchlist ? '<span class="tag wl">watchlist</span>' : '<span class="tag">early</span>') + '</td>' +
         '<td class="mut">' + esc(cat(r)) + '</td><td class="mut">' + chains(r) + '</td>' +
-        '<td class="n">' + usd(r.tvl_usd) + '</td><td class="n">' + chg(r.change_7d) + '</td><td class="n val">' + usd(r.implied_value_usd) + '</td></tr>';
-    }).join('') : '<tr><td colspan="7" class="empty">No rows match these filters.</td></tr>';
+        '<td class="n">' + usd(r.tvl_usd) + '</td><td class="n">' + chg(r.tvl_7d_pct) + '</td><td class="n val">' + usd(r.implied_value_usd) + '</td>' +
+        '<td class="n">' + fmtCap(r.econ.peak_cap_usd) + '</td><td class="n">' + fmtFee(r.econ.total_fee_usd) + ' · ' + r.econ.total_mins + 'm</td></tr>';
+    }).join('') : '<tr><td colspan="9" class="empty"><b>No protocols match the active cohort and execution budget</b><br>Relax Max Capital, Max Time, Signal, or Category/Chain filters to restore matching candidates.<br><button class="ghost amber" id="rst2">Reset All Filters</button></td></tr>';
     document.getElementById('bt').innerHTML = head(BCOLS, B) + '<tbody>' + body + '</tbody>';
     bindSort(B, drawBoard);
+    var r2 = document.getElementById('rst2');
+    if (r2) r2.onclick = function () { Object.assign(B, B0); drawBoard(true); };
     document.querySelectorAll('#bt tbody tr[data-slug]').forEach(function (tr) {
       var go = function () { B.scroll = document.querySelector('.wrap').scrollTop; location.hash = '#p/' + tr.getAttribute('data-slug'); };
       tr.onclick = go;
@@ -137,6 +186,19 @@
   function track(v, lo, hi) {
     var p = Math.max(0, Math.min(100, ((v - lo) / (hi - lo)) * 100));
     return '<div class="track" title="range ' + lo + ' to ' + hi + '"><i style="left:' + p.toFixed(1) + '%"></i></div>';
+  }
+  function ledger(r) {
+    var e = r.econ, k = e.steps.length, pc = r.tvl_7d_pct === null ? '' : r.tvl_7d_pct > 0 ? 'up' : r.tvl_7d_pct < 0 ? 'down' : 'flat';
+    var card = function (l, v, sub, c) { return '<div><span>' + l + '</span><b class="' + (c || '') + '">' + v + '</b><small>' + sub + '</small></div>'; };
+    return '<div class="card" id="farm-ledger"><div class="lh"><h3>Farm execution ledger · ' + k + ' steps</h3><span class="cad">' + (e.cadence === 'one-shot' ? 'ONE-SHOT SETUP' : e.cadence.toUpperCase() + ' CADENCE') + '</span></div>' +
+      '<div class="sum">' + card('Peak capital', fmtCap(e.peak_cap_usd), 'recoverable lockup') + card('Total fee burn', fmtFee(e.total_fee_usd), 'sunk gas &amp; tolls', 'fee') +
+      card('Active time', e.total_mins + ' min', 'across ' + k + ' steps') + card('7d TVL flow', fmtPct(r.tvl_7d_pct), 'snapshot 7d chg', pc) + '</div>' +
+      '<table class="ledger"><thead><tr><th>#</th><th>Step action &amp; specification</th><th class="n">Capital</th><th class="n">Fee</th><th class="n">Time</th></tr></thead><tbody>' +
+      e.steps.map(function (s, i) {
+        var c = s.cap_usd === 0 ? '<span class="flat">—</span>' : s.reused ? '<span class="flat" title="Reuses principal deployed in an earlier step">' + fmtCap(s.cap_usd) + ' ↺</span>' :
+          s.additive ? '<span title="Additional concurrent wallet reserve required">+' + fmtCap(s.cap_usd) + '</span>' : fmtCap(s.cap_usd);
+        return '<tr><td class="flat">' + s.n + '</td><td class="tx">' + esc(r.farm_steps[i]) + '</td><td class="n">' + c + '</td><td class="n ' + (s.fee_usd ? 'fee' : 'flat') + '">' + fmtFee(s.fee_usd) + '</td><td class="n">' + s.mins + 'm</td></tr>';
+      }).join('') + '</tbody><tfoot><tr><td colspan="2">TOTAL COMMITMENT (' + k + ' steps)</td><td class="n">' + fmtCap(e.peak_cap_usd) + ' peak</td><td class="n fee">' + fmtFee(e.total_fee_usd) + '</td><td class="n">' + e.total_mins + 'm</td></tr></tfoot></table></div>';
   }
   function detailView(slug) {
     var r = bySlug[slug];
@@ -163,15 +225,15 @@
       line('×', 'Chain', nch + ' chain' + (nch === 1 ? '' : 's') + ': 1 + ' + C.chain_step + ' × clamp(' + nch + ' − 1, 0, ' + C.chain_max_extra + ')', x(m.chain_multiplier), track(m.chain_multiplier, 1, 1 + C.chain_step * C.chain_max_extra)) +
       '<tr class="res"><td class="op">=</td><td class="lbl"><b>Implied value</b><small>unrounded product ' + full(product) + '; rounded, kept within 1 to 1e14</small></td><td class="v">' + full(r.implied_value_usd) + '</td></tr>' +
       '</tbody></table></div>' +
-      '<div class="card"><h3>Basics</h3><dl class="kv"><dt>Slug</dt><dd>' + esc(r.slug) + '</dd><dt>Category</dt><dd>' + esc(cat(r)) + '</dd><dt>Listed</dt><dd>' + esc(r.listed_at || 'unknown') + '</dd><dt>TVL</dt><dd>' + usd(r.tvl_usd) + '</dd><dt>7d TVL change</dt><dd>' + chg(r.change_7d) + '</dd><dt>Token</dt><dd>none yet (mcap null)</dd><dt>Board scope</dt><dd>' + (r.watchlist ? 'watchlist' : 'early (eligible extra)') + '</dd></dl>' +
+      '<div class="card"><h3>Basics</h3><dl class="kv"><dt>Slug</dt><dd>' + esc(r.slug) + '</dd><dt>Category</dt><dd>' + esc(cat(r)) + '</dd><dt>Listed</dt><dd>' + esc(r.listed_at || 'unknown') + '</dd><dt>TVL</dt><dd>' + usd(r.tvl_usd) + '</dd><dt>7d TVL change</dt><dd>' + chg(r.tvl_7d_pct) + '</dd><dt>Token</dt><dd>none yet (mcap null)</dd><dt>Board scope</dt><dd>' + (r.watchlist ? 'watchlist' : 'early (eligible extra)') + '</dd></dl>' +
       '<div class="chips">' + r.chains.map(function (c) { return '<span>' + esc(c) + '</span>'; }).join('') + '</div></div>' +
-      '</div><div class="card"><h3>Farm plan · ' + r.farm_steps.length + ' steps</h3><ol class="steps">' + r.farm_steps.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ol></div></div>';
+      '</div></div>' + ledger(r);
     document.getElementById('bk').onclick = function () { location.hash = '#board'; };
   }
 
   // ---------- live ----------
-  var L = { key: 'mcap_usd', dir: 'desc', q: '', cat: '' };
-  var LCOLS = [['symbol', 'Symbol'], ['name', 'Name'], ['category', 'Category'], ['tvl_usd', 'TVL', 1], ['change_7d', '7d growth', 1], ['mcap_usd', 'Market cap', 1], ['mcap_tvl', 'Mcap / TVL', 1]];
+  var L = Object.assign({}, L0);
+  var LCOLS = [['symbol', 'Symbol'], ['name', 'Name'], ['category', 'Category'], ['tvl_usd', 'TVL', 1], ['tvl_7d_pct', '7d Δ', 1, 0, '7-day snapshot TVL change'], ['mcap_usd', 'Market cap', 1], ['mcap_tvl', 'Mcap / TVL', 1]];
   function liveView() {
     app.innerHTML =
       '<section class="stats"><div class="stat"><b>' + live.length + '</b><span>live-token protocols (mcap reported)</span></div>' +
@@ -179,25 +241,32 @@
       '<div class="stat"><b>' + R.global_median.toFixed(3) + '</b><span>global median mcap / TVL</span></div>' +
       '<div class="stat"><b>' + R.categories.filter(function (c) { return c.n > 0; }).length + '</b><span>categories with live peers</span></div></section>' +
       '<div class="bar"><input id="lq" type="search" placeholder="Search name, symbol or slug" aria-label="Search" value="' + esc(L.q) + '">' +
-      '<select id="lc" aria-label="Category">' + opts(uniq(live, function (r) { return [cat(r)]; }), 'All categories') + '</select><span class="count" id="lcnt"></span></div>' +
+      '<select id="lc" aria-label="Category">' + opts(uniq(live, function (r) { return [cat(r)]; }), 'All categories') + '</select><span class="count" id="lcnt"></span></div>' + econBar(true) +
       '<div class="wrap"><table id="lt"></table></div>' +
       '<p class="hint">Real market caps from the snapshot, shown as reported. These protocols already have a token, so they are not ranked on the pre-token board; their mcap / TVL ratios are what calibrate the category multiples.</p>';
     var q = document.getElementById('lq'), c = document.getElementById('lc');
     c.value = L.cat;
     q.oninput = function () { L.q = q.value; drawLive(); };
     c.onchange = function () { L.cat = c.value; drawLive(); };
+    bindEcon(L, drawLive, L0);
     drawLive();
   }
-  function drawLive() {
+  function drawLive(sync) {
+    if (sync) {
+      document.getElementById('lq').value = L.q; document.getElementById('lc').value = L.cat;
+      document.getElementById('sg-sig').querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', b.getAttribute('data-v') === L.sig); });
+    }
     var q = L.q.trim().toLowerCase();
     var list = live.filter(function (r) {
+      if (L.sig === 'rise' && !(r.tvl_7d_pct > 0)) return false;
       if (L.cat && cat(r) !== L.cat) return false;
       return !q || r.name.toLowerCase().indexOf(q) >= 0 || r.slug.indexOf(q) >= 0 || (r.symbol || '').toLowerCase().indexOf(q) >= 0;
-    }).sort(cmp(L.key, L.dir));
+    }).sort(cmp(L.key, L.dir, true));
     document.getElementById('lcnt').textContent = list.length + ' of ' + live.length;
+    document.getElementById('ro').textContent = 'Showing ' + list.length + ' of ' + live.length + ' live benchmarks';
     document.getElementById('lt').innerHTML = head(LCOLS, L) + '<tbody>' + list.map(function (r) {
       return '<tr style="cursor:default"><td><b>' + esc(r.symbol || '—') + '</b></td><td class="nm">' + esc(r.name) + '</td><td class="mut">' + esc(cat(r)) + '</td>' +
-        '<td class="n">' + usd(r.tvl_usd) + '</td><td class="n">' + chg(r.change_7d) + '</td><td class="n val">' + usd(r.mcap_usd) + '</td><td class="n mut">' + r.mcap_tvl.toFixed(2) + '</td></tr>';
+        '<td class="n">' + usd(r.tvl_usd) + '</td><td class="n">' + chg(r.tvl_7d_pct) + '</td><td class="n val">' + usd(r.mcap_usd) + '</td><td class="n mut">' + r.mcap_tvl.toFixed(2) + '</td></tr>';
     }).join('') + '</tbody>';
     bindSort(L, drawLive);
   }
