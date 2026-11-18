@@ -43,5 +43,10 @@
 mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../kit/token-radar-01-kit/input/snapshot.json
 ```
 
+## ダッシュボードの説明・注釈（v4）
+- モデルタブ: カテゴリ別の n・raw median・weight・multiple・ボード行数と、「何を意味するか」の短文（ピア数、own/global の重み、clamp の有無、$100M TVL あたりの推定値）を **data.js の値から実行時に生成**。n=0／thin(weight<50%)／solid の件数、rank 1 の計算例、各係数の min/median/max も data.js から算出。ハードコードの文章・名前は使わない。
+- ボード: 「Why it ranks here」列（TVL 順位→実順位の移動 ▲▼、ボード中央値と比べて最も外れた係数、7d・年齢）。この列でソート可能。詳細ビュー: 「Why rank N」カード（TVL 順位との差、4係数のボード中央値比、カテゴリ注記）。
+- モデル・board.json・data.js・farm plan は v1 と不変（変更は dashboard/ のみ）。スクリーンショットは board / detail / model の3枚。
+
 ## 現段階のスコープ
 - 環境確認・キット理解・前提ファイル作成のみ完了。model / dashboard の実装、GitHub リポジトリ作成、キーペア作成、サインイン、提出はまだ行っていない。

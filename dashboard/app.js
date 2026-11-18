@@ -75,8 +75,43 @@
 
   // ---------- board ----------
   var B = { key: 'rank', dir: 'asc', q: '', cat: '', chain: '', scope: 'all' };
-  var BCOLS = [['rank', 'Rank'], ['name', 'Name'], ['category', 'Category'], ['chains_n', 'Chains'], ['tvl_usd', 'TVL', 1], ['change_7d', '7d growth', 1], ['implied_value_usd', 'Implied value', 1]];
+  var BCOLS = [['rank', 'Rank'], ['name', 'Name'], ['category', 'Category'], ['chains_n', 'Chains'], ['tvl_usd', 'TVL', 1], ['change_7d', '7d growth', 1], ['shift', 'Why it ranks here'], ['implied_value_usd', 'Implied value', 1]];
   rows.forEach(function (r) { r.chains_n = r.chains.length; });
+
+  // ---------- rank reasons, all derived from data.js ----------
+  function median(a) { var v = a.slice().sort(function (p, q) { return p - q; }), n = v.length; return n ? (n % 2 ? v[(n - 1) / 2] : (v[n / 2 - 1] + v[n / 2]) / 2) : 0; }
+  rows.slice().sort(function (a, b) { return b.tvl_usd - a.tvl_usd || (a.slug < b.slug ? -1 : 1); }).forEach(function (r, i) { r.tvl_rank = i + 1; });
+  rows.forEach(function (r) { r.shift = r.tvl_rank - r.rank; });
+  var FACT = [['category_multiple', 'category', 'Category multiple'], ['growth_multiplier', 'growth', 'Growth'], ['maturity_multiplier', 'maturity', 'Maturity'], ['chain_multiplier', 'chain', 'Chain']];
+  var med = {};
+  FACT.forEach(function (f) { med[f[0]] = median(rows.map(function (r) { return r.model[f[0]]; })); });
+  var catRows = {};
+  rows.forEach(function (r) { catRows[cat(r)] = (catRows[cat(r)] || 0) + 1; });
+  function pct(v) { return (v >= 0 ? '+' : '−') + Math.abs(v * 100).toFixed(0) + '%'; }
+  function factors(r) {
+    return FACT.map(function (f) { var ratio = r.model[f[0]] / med[f[0]]; return { key: f[0], id: f[1], label: f[2], val: r.model[f[0]], med: med[f[0]], ratio: ratio, ln: Math.log(ratio) }; });
+  }
+  function driver(r) {
+    return factors(r).sort(function (a, b) { return Math.abs(b.ln) - Math.abs(a.ln) || (a.id < b.id ? -1 : 1); })[0];
+  }
+  function ageTxt(r) { return r.model.age_days === null ? 'age unknown' : r.model.age_days + 'd listed'; }
+  function whyCell(r) {
+    var d = driver(r), s = catStat[cat(r)], up = d.ln >= 0;
+    var main = d.id === 'category' ? 'category ×' + d.val.toFixed(2) + ' (n=' + s.n + ') ' + (up ? '>' : '<') + ' med ×' + d.med.toFixed(2) :
+      d.id + ' ×' + d.val.toFixed(2) + ' ' + (up ? '>' : '<') + ' med ×' + d.med.toFixed(2);
+    var mv = r.shift > 0 ? '<b class="up">▲' + r.shift + '</b>' : r.shift < 0 ? '<b class="down">▼' + (-r.shift) + '</b>' : '<b class="flat">=</b>';
+    return '<span class="why1">' + mv + ' ' + esc(main) + '</span><small>TVL #' + r.tvl_rank + ' → rank #' + r.rank + ' · 7d ' + (r.change_7d === null ? 'n/a' : (r.change_7d > 0 ? '+' : '') + r.change_7d.toFixed(1) + '%') + ' · ' + (r.model.age_days === null ? 'age ?' : r.model.age_days + 'd') + '</small>';
+  }
+  function catRead(c) {
+    var g = R.global_median, per100 = usd(1e8 * c.multiple), vs = pct(c.multiple / g - 1);
+    var blended = c.weight * (c.raw_median === null ? 0 : c.raw_median) + (1 - c.weight) * g, clamped = Math.abs(blended - c.multiple) > 1e-9;
+    var tier = c.n === 0 ? 'none' : c.weight < 0.5 ? 'thin' : 'solid';
+    var t = c.n === 0 ? 'No live peers: falls back to the global median. ' :
+      c.n + ' peer' + (c.n > 1 ? 's' : '') + ' → ' + Math.round(c.weight * 100) + '% own median ×' + c.raw_median.toFixed(2) + ', ' + Math.round((1 - c.weight) * 100) + '% global; ' + (tier === 'thin' ? 'leans on the global median. ' : 'mostly reflects the category. ');
+    if (clamped && c.n > 0) t += 'Clamped from ×' + blended.toFixed(2) + ' to the ' + (c.multiple <= C.multiple_min + 1e-9 ? 'floor' : 'cap') + '. ';
+    t += '$100M TVL → ' + per100 + ' (' + vs + ' vs global).';
+    return { tier: tier, text: t };
+  }
 
   function boardView() {
     var early = R.extra_size;
@@ -92,7 +127,7 @@
       '<div class="seg" id="sc">' + [['all', 'All'], ['watch', 'Watchlist'], ['early', 'Early']].map(function (s) { return '<button data-sc="' + s[0] + '" aria-pressed="' + (B.scope === s[0]) + '">' + s[1] + '</button>'; }).join('') + '</div>' +
       '<span class="count" id="cnt"></span></div>' +
       '<div class="wrap"><table id="bt"></table></div>' +
-      '<p class="hint">Click a row for the model breakdown and farm plan. Click a column header to sort. Rank is by implied value; ties break by slug. Pre-token only: live-token protocols are in their own tab.</p>';
+      '<p class="hint">Click a row for the model breakdown and farm plan. Click a column header to sort. Rank is by implied value; ties break by slug. “Why it ranks here” names the row’s most unusual model factor against the board median and shows how far rank moved from a pure TVL ordering (▲ up, ▼ down); sort it to see the biggest movers. Pre-token only: live-token protocols are in their own tab.</p>';
     var fc = document.getElementById('fc'), fh = document.getElementById('fh'), q = document.getElementById('q');
     fc.value = B.cat; fh.value = B.chain;
     q.oninput = function () { B.q = q.value; drawBoard(); };
@@ -122,8 +157,8 @@
       return '<tr tabindex="0" data-slug="' + esc(r.slug) + '"><td>' + badge(r.rank) + '</td>' +
         '<td class="nm"><b>' + esc(r.name) + '</b>' + (r.watchlist ? '<span class="tag wl">watchlist</span>' : '<span class="tag">early</span>') + '</td>' +
         '<td class="mut">' + esc(cat(r)) + '</td><td class="mut">' + chains(r) + '</td>' +
-        '<td class="n">' + usd(r.tvl_usd) + '</td><td class="n">' + chg(r.change_7d) + '</td><td class="n val">' + usd(r.implied_value_usd) + '</td></tr>';
-    }).join('') : '<tr><td colspan="7" class="empty">No rows match these filters.</td></tr>';
+        '<td class="n">' + usd(r.tvl_usd) + '</td><td class="n">' + chg(r.change_7d) + '</td><td class="why">' + whyCell(r) + '</td><td class="n val">' + usd(r.implied_value_usd) + '</td></tr>';
+    }).join('') : '<tr><td colspan="8" class="empty">No rows match these filters.</td></tr>';
     document.getElementById('bt').innerHTML = head(BCOLS, B) + '<tbody>' + body + '</tbody>';
     bindSort(B, drawBoard);
     document.querySelectorAll('#bt tbody tr[data-slug]').forEach(function (tr) {
@@ -163,10 +198,22 @@
       line('×', 'Chain', nch + ' chain' + (nch === 1 ? '' : 's') + ': 1 + ' + C.chain_step + ' × clamp(' + nch + ' − 1, 0, ' + C.chain_max_extra + ')', x(m.chain_multiplier), track(m.chain_multiplier, 1, 1 + C.chain_step * C.chain_max_extra)) +
       '<tr class="res"><td class="op">=</td><td class="lbl"><b>Implied value</b><small>unrounded product ' + full(product) + '; rounded, kept within 1 to 1e14</small></td><td class="v">' + full(r.implied_value_usd) + '</td></tr>' +
       '</tbody></table></div>' +
+      whyCard(r) +
       '<div class="card"><h3>Basics</h3><dl class="kv"><dt>Slug</dt><dd>' + esc(r.slug) + '</dd><dt>Category</dt><dd>' + esc(cat(r)) + '</dd><dt>Listed</dt><dd>' + esc(r.listed_at || 'unknown') + '</dd><dt>TVL</dt><dd>' + usd(r.tvl_usd) + '</dd><dt>7d TVL change</dt><dd>' + chg(r.change_7d) + '</dd><dt>Token</dt><dd>none yet (mcap null)</dd><dt>Board scope</dt><dd>' + (r.watchlist ? 'watchlist' : 'early (eligible extra)') + '</dd></dl>' +
       '<div class="chips">' + r.chains.map(function (c) { return '<span>' + esc(c) + '</span>'; }).join('') + '</div></div>' +
       '</div><div class="card"><h3>Farm plan · ' + r.farm_steps.length + ' steps</h3><ol class="steps">' + r.farm_steps.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ol></div></div>';
     document.getElementById('bk').onclick = function () { location.hash = '#board'; };
+  }
+
+  function whyCard(r) {
+    var fs = factors(r), s = catStat[cat(r)], cr = catRead(s);
+    var mv = r.shift > 0 ? 'rises ' + r.shift + ' place' + (r.shift > 1 ? 's' : '') + ' above' : r.shift < 0 ? 'falls ' + (-r.shift) + ' place' + (r.shift < -1 ? 's' : '') + ' below' : 'matches';
+    var rowsH = fs.map(function (f) {
+      var d = f.ratio - 1, w = Math.min(50, Math.abs(Math.log(f.ratio)) / Math.log(3) * 50);
+      return '<li><span class="fl">' + f.label + '</span><span class="fv">×' + f.val.toFixed(3) + ' vs ×' + f.med.toFixed(3) + '</span><span class="dv"><i class="' + (d >= 0 ? 'p' : 'm') + '" style="width:' + w.toFixed(1) + '%;' + (d >= 0 ? 'left:50%' : 'right:50%') + '"></i></span><span class="fd ' + (d >= 0 ? 'up' : 'down') + '">' + pct(d) + '</span></li>';
+    }).join('');
+    return '<div class="card"><h3>Why rank ' + r.rank + '</h3><p class="lead">TVL ' + usd(r.tvl_usd) + ' is #' + r.tvl_rank + ' of ' + rows.length + '; the model ' + mv + ' that order at #' + r.rank + '. Each factor vs the board median:</p><ul class="fx">' + rowsH + '</ul>' +
+      '<p class="note"><b>' + esc(cat(r)) + '</b> (' + (catRows[cat(r)]) + ' board row' + (catRows[cat(r)] > 1 ? 's' : '') + '): ' + esc(cr.text) + '</p></div>';
   }
 
   // ---------- live ----------
@@ -203,16 +250,30 @@
   }
 
   // ---------- model ----------
+  function catTable() {
+    var list = R.categories.filter(function (c) { return c.n > 0 || catRows[c.category]; }).sort(function (a, b) { return (catRows[b.category] || 0) - (catRows[a.category] || 0) || b.n - a.n || (a.category < b.category ? -1 : 1); });
+    var t = { none: 0, thin: 0, solid: 0 };
+    list.forEach(function (c) { t[catRead(c).tier]++; });
+    return '<div class="tiers"><span class="tier none"><b>' + t.none + '</b> no peers → global median</span><span class="tier thin"><b>' + t.thin + '</b> thin (weight &lt; 50%)</span><span class="tier solid"><b>' + t.solid + '</b> solid (weight ≥ 50%)</span></div>' +
+      '<div class="wrap short"><table class="ct"><thead><tr><th class="plain">Category</th><th class="plain n">board rows</th><th class="plain n">n</th><th class="plain n">raw median</th><th class="plain n">weight</th><th class="plain n">multiple</th><th class="plain">What it implies</th></tr></thead><tbody>' +
+      list.map(function (c) { var cr = catRead(c); return '<tr class="tr-' + cr.tier + '"><td>' + esc(c.category) + '</td><td class="n">' + (catRows[c.category] || 0) + '</td><td class="n">' + c.n + '</td><td class="n">' + (c.raw_median === null ? '—' : c.raw_median.toFixed(3)) + '</td><td class="n">' + c.weight.toFixed(3) + '</td><td class="n">' + c.multiple.toFixed(3) + '</td><td class="rd">' + esc(cr.text) + '</td></tr>'; }).join('') + '</tbody></table></div>';
+  }
+  function exampleBlock() {
+    var r = rows[0], m = r.model, p = r.tvl_usd * m.category_multiple * m.growth_multiplier * m.maturity_multiplier * m.chain_multiplier;
+    var spread = FACT.map(function (f) { var v = rows.map(function (q) { return q.model[f[0]]; }); return '<tr><td>' + f[2] + '</td><td class="n">' + Math.min.apply(null, v).toFixed(3) + '</td><td class="n">' + median(v).toFixed(3) + '</td><td class="n">' + Math.max.apply(null, v).toFixed(3) + '</td></tr>'; }).join('');
+    return '<h2>Worked example: rank 1</h2><div class="formula">' + esc(r.name) + ' (' + esc(cat(r)) + ')\n' + full(r.tvl_usd) + ' × ' + m.category_multiple.toFixed(3) + ' × ' + m.growth_multiplier.toFixed(3) + ' × ' + m.maturity_multiplier.toFixed(3) + ' × ' + m.chain_multiplier.toFixed(3) + ' = ' + full(p) + '</div>' +
+      '<p>Spread of each factor across the ' + rows.length + ' board rows. A factor far from its median is what moves a row away from its TVL order; the board column “Why it ranks here” names the largest one.</p>' +
+      '<table><thead><tr><th class="plain">Factor</th><th class="plain n">min</th><th class="plain n">median</th><th class="plain n">max</th></tr></thead><tbody>' + spread + '</tbody></table>';
+  }
   function modelView() {
-    var withPeers = R.categories.filter(function (c) { return c.n > 0; }).sort(function (a, b) { return b.n - a.n || (a.category < b.category ? -1 : 1); }).slice(0, 8);
     app.innerHTML = '<article class="prose">' +
       '<h2>What the board is</h2><p>Each pre-token protocol gets an <b>implied value</b>: what the market might pay for its token, estimated from how already-tokenised protocols trade against their TVL. Every input is a number in the snapshot (TVL, 7-day TVL change, listing date, chains, and the market caps of live-token peers); no protocol is named in the code. It is a screening heuristic for ordering, not a price forecast.</p>' +
       '<div class="formula">implied = round( TVL × category_multiple × growth × maturity × chain )\nclamped to [1, 1e14]; ranked by implied desc, ties by slug asc</div>' +
       '<h2>Category multiple</h2><p>For every live-token protocol with TVL &gt; 0, take mcap / TVL. The raw category value is the <b>median</b> of that ratio within the category. The global median over all live-token protocols is ' + R.global_median.toFixed(4) + '. Thin categories are shrunk toward it:</p>' +
       '<div class="formula">w = n / (n + ' + C.shrink_k + ')                 n = live-token peers in the category\nmultiple = clamp( w × raw_median + (1 − w) × global_median, ' + C.multiple_min.toFixed(2) + ', ' + C.multiple_max.toFixed(2) + ' )</div>' +
-      '<p>With n = 0 the multiple is the global median; n = 5 gives half weight to the category. Categories with the most peers:</p>' +
-      '<table><thead><tr><th class="plain">Category</th><th class="plain n">peers n</th><th class="plain n">raw median</th><th class="plain n">weight</th><th class="plain n">multiple</th></tr></thead><tbody>' +
-      withPeers.map(function (c) { return '<tr><td>' + esc(c.category) + '</td><td class="n">' + c.n + '</td><td class="n">' + c.raw_median.toFixed(3) + '</td><td class="n">' + c.weight.toFixed(3) + '</td><td class="n">' + c.multiple.toFixed(3) + '</td></tr>'; }).join('') + '</tbody></table>' +
+      '<p>With n = 0 the multiple is the global median; n = ' + C.shrink_k + ' gives half weight to the category.</p>' +
+      '<p>Notes for every category with live peers or board rows are below; each reading is generated from the snapshot values.</p>' + catTable() +
+      exampleBlock() +
       '<h2>Growth, maturity, chain</h2>' +
       '<div class="formula">growth   = 1 + clamp(change_7d, ' + C.growth_floor + ', ' + C.growth_cap + ') / 100 × ' + C.growth_weight + '      (null change counts as 0)\nmaturity = ' + C.maturity_floor + ' + ' + C.maturity_range + ' × min(age_days, ' + C.maturity_days + ') / ' + C.maturity_days + '   (age from listed_at to as_of; unknown = ' + C.unknown_age_days + ' days)\nchain    = 1 + ' + C.chain_step + ' × clamp(chains − 1, 0, ' + C.chain_max_extra + ')</div>' +
       '<p>So growth ranges from ' + (1 + C.growth_floor / 100 * C.growth_weight).toFixed(2) + ' to ' + (1 + C.growth_cap / 100 * C.growth_weight).toFixed(2) + ', maturity from ' + C.maturity_floor + ' (just listed) to ' + (C.maturity_floor + C.maturity_range).toFixed(1) + ' (three years or more), and chain from 1.00 to ' + (1 + C.chain_step * C.chain_max_extra).toFixed(2) + '. Age is measured against the snapshot date (' + R.as_of + '), never the current clock.</p>' +
