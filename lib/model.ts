@@ -3,6 +3,8 @@
 // Display-only layers (drivers, execution econ, facets) are computed here at build time and never feed back into the model.
 import { COST_RE, farmSteps } from './farm.ts';
 import type { FarmStep } from './farm.ts';
+import { breakdownFor, cohortPositions } from './breakdown.ts';
+import type { Breakdown, CohortPosition } from './breakdown.ts';
 
 export interface Protocol {
   slug: string; name: string; category: string | null; chains: string[]; tvl_usd: number;
@@ -185,7 +187,7 @@ export function driversOf(r: BoardRow, globalMedian: number): Drivers {
 
 // ---- board ----
 export type Cohort = { cat: string; pc: string };
-export type RadarRow = BoardRow & Cohort & { drivers: Drivers; tvl_7d_pct: number | null; econ: Econ };
+export type RadarRow = BoardRow & Cohort & { drivers: Drivers; tvl_7d_pct: number | null; econ: Econ; bd: { b: Breakdown; c: CohortPosition } };
 export type RadarLive = LiveRow & Cohort & { tvl_7d_pct: number | null };
 export interface Facets { categories: Array<{ id: string; pre: number; live: number; mult: number }>; chains: Array<{ id: string; pre: number; live: number }>; global_mult: number }
 export interface Radar {
@@ -244,10 +246,14 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     mcap_usd: null, listed_at: p.listed_at, token_status: 'pre-token', watchlist: wl.has(p.slug), implied_value_usd: implied,
     model: f, farm_steps: plans[i]!.map((s) => s.text),
   }));
+  const cohorts = cohortPositions(board);
   const rows: RadarRow[] = board.map((b, i) => {
     const econ = buildEcon(plans[i]!);
     assertEcon(b.slug, b.farm_steps, econ);
-    return { ...b, cat: b.category ?? UNCATEGORIZED, pc: b.chains[0] ?? '—', drivers: driversOf(b, table.global_median), tvl_7d_pct: tvl7d(b), econ };
+    const p = ranked[i]!.p;
+    const bd = { b: breakdownFor(p, snapshot.as_of, table.lookup.get(catOf(p))!, table.global_median), c: cohorts.get(b.slug)! };
+    if (bd.b.implied_value_usd !== b.implied_value_usd) throw new Error(`breakdown diverges from board for ${b.slug}`);
+    return { ...b, cat: b.category ?? UNCATEGORIZED, pc: b.chains[0] ?? '—', drivers: driversOf(b, table.global_median), tvl_7d_pct: tvl7d(b), econ, bd };
   });
   const live: LiveRow[] = snapshot.protocols.filter(isLive).sort((a, b) => b.mcap_usd! - a.mcap_usd! || bySlug(a, b)).map((p) => ({
     slug: p.slug, name: p.name, category: p.category, chains: p.chains, tvl_usd: p.tvl_usd, change_7d: p.change_7d, mcap_usd: p.mcap_usd!,

@@ -271,6 +271,24 @@
         return '<tr><td class="flat">' + s.n + '</td><td class="tx">' + esc(r.farm_steps[i]) + '</td><td class="n">' + c + '</td><td class="n ' + (s.fee_usd ? 'fee' : 'flat') + '">' + fee(s.fee_usd) + '</td><td class="n">' + s.mins + 'm</td></tr>';
       }).join('') + '</tbody><tfoot><tr><td colspan="2">TOTAL COMMITMENT (' + k + ' steps)</td><td class="n">' + cap(e.peak_cap_usd) + ' peak</td><td class="n fee">' + fee(e.total_fee_usd) + '</td><td class="n">' + e.total_mins + 'm</td></tr></tfoot></table></div>';
   }
+  // Valuation breakdown + cohort position: numbers precomputed at build time (lib/breakdown.ts), only formatted here.
+  function bdCard(r) {
+    var b = r.bd.b, c = r.bd.c, k = b.category, g = b.growth, a = b.maturity, h = b.chain;
+    var row = function (t, v) { return '<dt>' + t + '</dt><dd>' + v + '</dd>'; };
+    return '<div class="card"><h3>Valuation breakdown</h3><dl class="kv">' +
+      row('TVL', full(b.tvl_usd)) +
+      row('Category median', k.raw_median === null ? 'none (0 live)' : k.raw_median.toFixed(3)) +
+      row('Global median', k.global_median.toFixed(3)) +
+      row('Live n · weight', k.n + ' · ' + k.weight.toFixed(3)) +
+      row('Multiple', x(k.multiple) + (k.multiple !== k.blended ? ' (clamped from ' + k.blended.toFixed(3) + ')' : '')) +
+      row('Growth', g.change_7d === null ? '—' : g.change_7d.toFixed(1) + '%') +
+      row('Growth used · ×', g.pct_used + '% · ' + x(g.multiplier)) +
+      row('Age days · ×', (a.age_days === null ? 'unknown (' + a.age_used + ')' : a.age_days) + ' · ' + x(a.multiplier)) +
+      row('Chains · ×', h.count + ' (+' + h.extra + ') · ' + x(h.multiplier)) +
+      row('Product = implied', full(b.implied_value_usd)) +
+      '</dl><p class="take">Cohort: rank ' + r.bd.c.rank_by_implied + ' of ' + c.cohort_size + ' in ' + esc(c.category) + ', percentile ' + c.percentile.toFixed(1) + ', category median implied ' + (c.median_implied_usd === null ? '—' : full(c.median_implied_usd)) + '</p></div>';
+  }
+
   function detailView(slug) {
     var r = bySlug[slug];
     if (!r) { app.innerHTML = '<div class="empty">Unknown protocol. <a href="#board">Back to board</a></div>'; return; }
@@ -295,8 +313,8 @@
       line('×', 'Maturity', ageNote, x(m.maturity_multiplier), track(m.maturity_multiplier, C.maturity_floor, C.maturity_floor + C.maturity_range)) +
       line('×', 'Chain', nch + ' chain' + (nch === 1 ? '' : 's') + ': 1 + ' + C.chain_step + ' × clamp(' + nch + ' − 1, 0, ' + C.chain_max_extra + ')', x(m.chain_multiplier), track(m.chain_multiplier, 1, 1 + C.chain_step * C.chain_max_extra)) +
       '<tr class="res"><td class="op">=</td><td class="lbl"><b>Implied value</b><small>unrounded product ' + full(product) + '; rounded, kept within 1 to 1e14</small></td><td class="v">' + full(r.implied_value_usd) + '</td></tr></tbody></table></div>' +
-      '<div class="card"><h3>Basics</h3><dl class="kv"><dt>Slug</dt><dd>' + esc(r.slug) + '</dd><dt>Category</dt><dd>' + esc(r.cat) + '</dd><dt>Listed</dt><dd>' + esc(r.listed_at || 'unknown') + '</dd><dt>TVL</dt><dd>' + usd(r.tvl_usd) + '</dd><dt>7d TVL change</dt><dd>' + chg(r.tvl_7d_pct) + '</dd><dt>Token</dt><dd>none yet (mcap null)</dd><dt>Board scope</dt><dd>' + (r.watchlist ? 'watchlist' : 'early (eligible extra)') + '</dd></dl>' +
-      '<div class="chips">' + r.chains.map(function (c) { return '<span>' + esc(c) + '</span>'; }).join('') + '</div></div></div>';
+      '<div><div class="card"><h3>Basics</h3><dl class="kv"><dt>Slug</dt><dd>' + esc(r.slug) + '</dd><dt>Category</dt><dd>' + esc(r.cat) + '</dd><dt>Listed</dt><dd>' + esc(r.listed_at || 'unknown') + '</dd><dt>TVL</dt><dd>' + usd(r.tvl_usd) + '</dd><dt>7d TVL change</dt><dd>' + chg(r.tvl_7d_pct) + '</dd><dt>Token</dt><dd>none yet (mcap null)</dd><dt>Board scope</dt><dd>' + (r.watchlist ? 'watchlist' : 'early (eligible extra)') + '</dd></dl>' +
+      '<div class="chips">' + r.chains.map(function (c) { return '<span>' + esc(c) + '</span>'; }).join('') + '</div></div>' + bdCard(r) + '</div></div>';
     document.getElementById('bk').onclick = function () { location.hash = '#board'; };
   }
 
