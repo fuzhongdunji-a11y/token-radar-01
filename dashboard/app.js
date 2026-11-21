@@ -244,7 +244,7 @@
       }).join('');
     }
     document.getElementById('bt').innerHTML = head(pre ? PCOLS : LCOLS, st) + '<tbody>' + body + '</tbody>';
-    document.getElementById('hint').textContent = pre ? 'Click a row for the evidence, execution ledger and farm plan. Global rank stays fixed while filtering; ties break by rank, then slug. Null values sort last.' : 'Observed market caps from the snapshot: reference comps that calibrate the category multiples. No rank, implied value or farm plan applies to them.';
+    document.getElementById('hint').textContent = pre ? 'Click a row for evidence, ledger and farm plan. Global rank stays fixed while filtering; ties break by rank, then slug. Null values sort last.' : 'Observed market caps from the snapshot: reference comps that calibrate the category multiples. No rank, implied value or farm plan applies to them.';
     var lr = !pre && S.card && bySlugL[S.card];
     document.getElementById('card').innerHTML = lr ? '<div class="lcard"><b>' + esc(lr.name) + (lr.symbol ? ' $' + esc(lr.symbol) : '') + '</b> · ' + esc(lr.cat) + ' · market cap ' + full(lr.mcap_usd) + ' · TVL ' + full(lr.tvl_usd) + ' · observed mcap/TVL ' + mult(lr.mcap_tvl) + ' · 7d ' + chg(lr.tvl_7d_pct) + ' · ' + esc(lr.chains.join(', ')) + ' <button id="cx">Close</button></div>' : '';
     if (lr) document.getElementById('cx').onclick = function () { S.card = ''; drawBoard(); };
