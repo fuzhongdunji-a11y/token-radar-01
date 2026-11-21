@@ -261,14 +261,18 @@
   function ledger(r) {
     var e = r.econ, k = e.steps.length;
     var card = function (l, v, sub, c) { return '<div><span>' + l + '</span><b class="' + (c || '') + '">' + v + '</b><small>' + sub + '</small></div>'; };
+    var sc = r.scen, rg = function (q, f, u) { return q.low === q.high ? f(q.mid) + (u || '') : f(q.low) + '–' + f(q.high).replace('$', '') + (u || ''); };
+    var strip = '<div class="scen">' + sc.scenarios.map(function (t) {
+      return '<div class="' + t.id + (t.id === 'mid' ? ' cur' : '') + '"><span>' + t.id.toUpperCase() + (t.id === 'mid' ? ' · current plan' : '') + '</span><b>' + cap(t.peak_cap_usd) + ' peak</b><small>' + fee(t.total_fee_usd) + ' fees · ' + t.total_mins + ' min</small></div>';
+    }).join('') + '</div><p class="assume">Planning assumptions, not measured data: capital ×0.5/×1/×2, fees ×0.7/×1/×1.6, time ×0.8/×1/×1.3 (low/mid/high). Mid is the plan above; filters use mid.</p>';
     return '<div class="card" id="farm-ledger"><div class="lh"><h3>Farm execution ledger · ' + k + ' steps</h3><span class="cad">' + (e.cadence === 'one-shot' ? 'ONE-SHOT SETUP' : e.cadence.toUpperCase() + ' CADENCE') + '</span></div>' +
       '<div class="sum">' + card('Peak capital', cap(e.peak_cap_usd), 'recoverable lockup') + card('Total fee burn', fee(e.total_fee_usd), 'sunk gas &amp; tolls', 'fee') +
-      card('Active time', e.total_mins + ' min', 'across ' + k + ' steps') + card('7d TVL flow', none(r.tvl_7d_pct) ? '—' : fGrow(r.tvl_7d_pct, 1), 'snapshot 7d chg', tone(r.tvl_7d_pct)) + '</div>' +
+      card('Active time', e.total_mins + ' min', 'across ' + k + ' steps') + card('7d TVL flow', none(r.tvl_7d_pct) ? '—' : fGrow(r.tvl_7d_pct, 1), 'snapshot 7d chg', tone(r.tvl_7d_pct)) + '</div>' + strip +
       '<table class="ledger"><thead><tr><th>#</th><th>Step action &amp; specification</th><th class="n">Capital</th><th class="n">Fee</th><th class="n">Time</th></tr></thead><tbody>' +
       e.steps.map(function (s, i) {
         var c = s.cap_usd === 0 ? '<span class="flat">—</span>' : s.reused ? '<span class="flat" title="Reuses principal deployed in an earlier step">' + cap(s.cap_usd) + ' ↺</span>' :
           s.additive ? '<span title="Additional concurrent wallet reserve required">+' + cap(s.cap_usd) + '</span>' : cap(s.cap_usd);
-        return '<tr><td class="flat">' + s.n + '</td><td class="tx">' + esc(r.farm_steps[i]) + '</td><td class="n">' + c + '</td><td class="n ' + (s.fee_usd ? 'fee' : 'flat') + '">' + fee(s.fee_usd) + '</td><td class="n">' + s.mins + 'm</td></tr>';
+        return '<tr><td class="flat">' + s.n + '</td><td class="tx">' + esc(r.farm_steps[i]) + '</td><td class="n">' + c + '</td><td class="n ' + (s.fee_usd ? 'fee' : 'flat') + '">' + rg(sc.steps[i].fee_usd, fee) + '</td><td class="n">' + rg(sc.steps[i].mins, String, 'm') + '</td></tr>';
       }).join('') + '</tbody><tfoot><tr><td colspan="2">TOTAL COMMITMENT (' + k + ' steps)</td><td class="n">' + cap(e.peak_cap_usd) + ' peak</td><td class="n fee">' + fee(e.total_fee_usd) + '</td><td class="n">' + e.total_mins + 'm</td></tr></tfoot></table></div>';
   }
   // Valuation breakdown + cohort position: numbers precomputed at build time (lib/breakdown.ts), only formatted here.

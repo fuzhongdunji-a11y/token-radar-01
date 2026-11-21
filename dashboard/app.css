@@ -164,11 +164,18 @@ td.ev.up{color:#4ade80}td.ev.down{color:#f87171}td.ev.flat{color:#9ca3af}
 #farm-ledger{background:#111622;border-color:#232d42}
 .lh{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}.lh h3{margin:0;color:#e8eef7;letter-spacing:.07em}
 .cad{font:10px var(--mono);padding:2px 7px;border-radius:4px;border:1px solid #2b3852;color:#8b97ad;background:#161d2b}
+.scen{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:4px}
+.scen div{border:1px solid #232d42;border-radius:8px;padding:6px 10px;background:#0f1420;display:flex;flex-direction:column;gap:1px}
+.scen div.cur{border-color:#4f7cff;background:#141c30}
+.scen span{font:600 10.5px var(--mono);letter-spacing:.08em;color:var(--mute)}
+.scen b{font:650 15px var(--mono);color:var(--ink)}
+.scen small{font:11.5px var(--mono);color:var(--mute)}
+.assume{font-size:10.5px;color:var(--dim);margin:2px 2px 10px}
 .sum{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px}
 .sum div{padding:8px 10px;background:#161d2b;border:1px solid #232d42;border-radius:6px}
 .sum span{display:block;font-size:10px;text-transform:uppercase;color:#8b97ad;letter-spacing:.05em}.sum b{font-size:15px;display:block}.sum small{font-size:10px;color:#6e7b91}
 .sum b.fee,td.fee{color:#e5b567}
-table.ledger{font-size:12px;table-layout:fixed}table.ledger th:first-child{width:28px}table.ledger th:nth-child(3){width:86px}table.ledger th:nth-child(4){width:58px}table.ledger th:nth-child(5){width:48px}table.ledger td,table.ledger th{white-space:normal}table.ledger th{position:static;font-size:10px;padding:5px 6px;border-bottom:1px solid #232d42;background:none}
+table.ledger{font-size:12px;table-layout:fixed}table.ledger th:first-child{width:28px}table.ledger th:nth-child(3){width:86px}table.ledger th:nth-child(4){width:108px}table.ledger th:nth-child(5){width:78px}table.ledger td,table.ledger th{white-space:normal}table.ledger th{position:static;font-size:10px;padding:5px 6px;border-bottom:1px solid #232d42;background:none}
 table.ledger td{padding:4px 6px;border-bottom:1px solid #1a2233;vertical-align:top;line-height:1.35}
 .back{margin-bottom:8px}.dh{margin-bottom:8px}.take{margin:6px 2px 8px}.sum{margin-bottom:8px}#farm-ledger{padding:12px 18px}.lh{margin-bottom:6px}
 table.ledger td.tx{color:#e8eef7}table.ledger .n{white-space:nowrap}

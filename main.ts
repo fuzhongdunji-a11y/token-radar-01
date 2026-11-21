@@ -49,7 +49,7 @@ if (existsSync(refFile)) {
   }
 }
 // data.js rows carry extra display fields only: strip them and the rows must equal board.json exactly.
-const stripped = radar.rows.map(({ cat: _c, pc: _p, drivers: _d, tvl_7d_pct: _t, econ: _e, bd: _b, ...r }) => r);
+const stripped = radar.rows.map(({ cat: _c, pc: _p, drivers: _d, tvl_7d_pct: _t, econ: _e, scen: _s, bd: _b, ...r }) => r);
 if (JSON.stringify(stripped) !== JSON.stringify(board)) throw new Error('data.js rows diverge from board.json');
 if (radar.live.some((l) => 'implied_value_usd' in l || 'rank' in l || 'farm_steps' in l || 'econ' in l)) throw new Error('live rows carry pre-token fields');
 
