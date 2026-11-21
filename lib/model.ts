@@ -9,6 +9,8 @@ import { watchCards, watchGroups } from './watchlist.ts';
 import type { WatchCard, WatchGroup } from './watchlist.ts';
 import { scenariosFor } from './scenarios.ts';
 import type { PlanScenarios } from './scenarios.ts';
+import { PRESETS, CAP_VALUES, MINS_VALUES, SIG_VALUES, TIER_VALUES, matchPreset } from './presets.ts';
+import type { Preset } from './presets.ts';
 
 export interface Protocol {
   slug: string; name: string; category: string | null; chains: string[]; tvl_usd: number;
@@ -198,7 +200,7 @@ export interface Radar {
   as_of: string; source: string; floor_usd: number; model_version: string; constants: typeof MODEL;
   global_median: number; categories: CategoryStat[];
   watchlist_size: number; board_size: number; extra_size: number; live_size: number;
-  rows: RadarRow[]; live: RadarLive[]; facets: Facets; watch_groups: WatchGroup[];
+  rows: RadarRow[]; live: RadarLive[]; facets: Facets; watch_groups: WatchGroup[]; presets: Preset[];
 }
 
 // Facets are precomputed so the browser never recomputes counts or peer multiples. The snapshot has no per-chain TVL,
@@ -274,6 +276,12 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
   const wranks = rows.filter((r) => r.watchlist).map((r) => r.wc?.watch_rank ?? 0).sort((a, b) => a - b);
   if (wranks.length !== wl.size || wranks.some((v, i) => v !== i + 1)) throw new Error('watch_rank values are not exactly 1..watchlist_size');
   if (rows.some((r) => r.watchlist !== (r.wc !== null))) throw new Error('wc must be set on exactly the watchlist rows');
+  if (new Set(PRESETS.map((p) => p.id)).size !== PRESETS.length) throw new Error('preset ids are not unique');
+  for (const p of PRESETS) {
+    const s = p.state;
+    if (!CAP_VALUES.includes(s.cap) || !MINS_VALUES.includes(s.mins) || !SIG_VALUES.includes(s.sig) || !TIER_VALUES.includes(s.tier)) throw new Error(`preset ${p.id} state outside allow-lists`);
+    if (matchPreset(s) !== p.id) throw new Error(`preset ${p.id} does not match itself`);
+  }
   const live: LiveRow[] = snapshot.protocols.filter(isLive).sort((a, b) => b.mcap_usd! - a.mcap_usd! || bySlug(a, b)).map((p) => ({
     slug: p.slug, name: p.name, category: p.category, chains: p.chains, tvl_usd: p.tvl_usd, change_7d: p.change_7d, mcap_usd: p.mcap_usd!,
     mcap_tvl: p.tvl_usd > 0 ? r4(p.mcap_usd! / p.tvl_usd) : 0, listed_at: p.listed_at, symbol: p.symbol,
@@ -283,7 +291,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     global_median: table.global_median, categories: table.stats,
     watchlist_size: wl.size, board_size: board.length, extra_size: board.filter((r) => !r.watchlist).length, live_size: live.length,
     rows, live: live.map((l) => ({ ...l, cat: l.category ?? UNCATEGORIZED, pc: l.chains[0] ?? '—', tvl_7d_pct: tvl7d(l) })),
-    facets: buildFacets(board, live, table), watch_groups: wgroups,
+    facets: buildFacets(board, live, table), watch_groups: wgroups, presets: PRESETS,
   };
   return { board, radar };
 }

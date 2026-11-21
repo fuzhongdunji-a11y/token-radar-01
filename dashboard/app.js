@@ -91,6 +91,22 @@
   var CAPS = [[0, 'Any', 'No peak capital limit'], [100, '≤ $100', 'Peak recoverable working capital up to $100'], [150, '≤ $150', 'Peak recoverable working capital up to $150'], [300, '≤ $300', 'Peak recoverable working capital up to $300']];
   var TIMES = [[0, 'Any', 'No active execution time limit'], [130, '≤ 130m', 'Total active execution time up to 130 minutes'], [160, '≤ 160m', 'Total active execution time up to 160 minutes']];
   var SIGS = [['all', 'All', 'No momentum filter'], ['rise', '7d Rising', 'Only protocols with strictly positive 7-day TVL growth (> 0%)']];
+  var V = { cap: CAPS, mins: TIMES, sig: SIGS };
+  function enc() { return Object.keys(S0).filter(function (k) { return S[k] !== S0[k]; }).map(function (k) { return k + '=' + encodeURIComponent(S[k]); }).join('&'); }
+  function dec(t) {
+    var r = Object.assign({}, S0), seen = {};
+    t.split('&').forEach(function (p) {
+      var i = p.indexOf('='), k, v, n, ok;
+      if (i < 0) return;
+      try { k = decodeURIComponent(p.slice(0, i)); v = decodeURIComponent(p.slice(i + 1)); } catch (x) { return; }
+      if (seen[k] || !S0.hasOwnProperty(k)) return;
+      n = Number(v);
+      ok = k === 'q' || (V[k] ? V[k].some(function (o) { return o[0] === (k === 'sig' ? v : n); }) : k === 'tier' ? ['', 'watch', 'early'].indexOf(v) >= 0 : F[k === 'cat' ? 'categories' : 'chains'].some(function (c) { return c.id === v; }));
+      if (!ok) return;
+      seen[k] = 1; r[k] = k === 'q' ? v.trim().slice(0, 64) : k === 'cap' || k === 'mins' ? n : v;
+    });
+    return r;
+  }
   var PCOLS = [['rank', '#', 0, 'Global rank by implied value; filters never renumber it'], ['name', 'Protocol'], ['cat', 'Category'], ['pc', 'Chains'], ['tvl_usd', 'TVL', 1], ['tvl_7d_pct', '7d Δ', 1, '7-day snapshot TVL change'],
     ['mult', 'Mult', 1, 'Mult: implied value / TVL (T = TVL base)', 'ev f'], ['grw', 'Grw 7d', 1, 'Growth: 7d change in the same base (TVL); the snapshot has no 30d field', 'ev'], ['age', 'Age', 1, 'Age: days since listing, measured at the snapshot date', 'ev'],
     ['implied_value_usd', 'Implied val', 1, 'Implied value (radar-2)', 'f'], ['peak', 'Peak cap', 1, 'Peak concurrent recoverable capital required'], ['fee', 'Fee', 1, 'Fee: total sunk fee burn. Time: total active minutes', '', 'mins', 'Time']];
@@ -129,8 +145,9 @@
     document.getElementById('f-chain').onchange = function () { S.chain = this.value; drawBoard(); };
     document.getElementById('f-reset').onclick = function () { resetView(0); };
     var click = function (e) {
-      var b = e.target.closest('button[data-g]');
-      if (b) { var g = b.getAttribute('data-g'), v = b.getAttribute('data-v'); S[g] = g === 'cap' || g === 'mins' ? Number(v) : v; drawBoard(); }
+      var b = e.target.closest('button[data-g]'), pb = e.target.closest('button[data-p]');
+      if (pb) { Object.assign(S, R.presets.filter(function (p) { return p.id === pb.getAttribute('data-p'); })[0].state); drawBoard(); }
+      else if (b) { var g = b.getAttribute('data-g'), v = b.getAttribute('data-v'); S[g] = g === 'cap' || g === 'mins' ? Number(v) : v; drawBoard(); }
       else if (e.target.id === 'rst') resetView(1);
     };
     document.getElementById('f-tier').onclick = click; document.getElementById('econ').onclick = click;
@@ -203,7 +220,8 @@
       right = '<button id="bridge">← Compare ' + oth + ' pre-token targets in same filter</button>';
       ro = 'Showing ' + list.length + ' of ' + live.length + ' live benchmarks';
     }
-    document.getElementById('econ').innerHTML = (pre ? '<span class="gl">Max capital</span>' + seg('cap', CAPS, S.cap) + '<span class="gl">Max time</span>' + seg('mins', TIMES, S.mins) : '') +
+    var mp = (R.presets.filter(function (p) { return Object.keys(S0).every(function (k) { return p.state[k] === S[k]; }); })[0] || {}).id;
+    document.getElementById('econ').innerHTML = (pre ? '<span class="gl">Presets</span><div class="seg">' + R.presets.map(function (p) { return '<button data-p="' + esc(p.id) + '" title="' + esc(p.hint) + '" aria-pressed="' + (mp === p.id) + '">' + esc(p.label) + '</button>'; }).join('') + '</div><span class="gl">Max capital</span>' + seg('cap', CAPS, S.cap) + '<span class="gl">Max time</span>' + seg('mins', TIMES, S.mins) : '') +
       '<span class="gl">Signal</span>' + seg('sig', SIGS, S.sig) + '<span class="ro">' + ro + '</span><button class="ghost" id="rst">Reset View</button>';
     document.getElementById('strip').innerHTML = '<span>' + left + '</span><span>' + right + '</span>';
     document.getElementById('bridge').onclick = function () { S.mode = pre ? 'live' : 'pre'; S.q = ''; S.card = ''; location.hash = pre ? '#live' : '#board'; };
@@ -212,7 +230,7 @@
       var sum = [S.cat && 'Category: ' + S.cat, S.chain && 'Chain: ' + S.chain, pre && S.tier && 'Tier: ' + S.tier, pre && S.cap && 'Max capital: ' + cap(S.cap), pre && S.mins && 'Max time: ' + S.mins + 'm', S.sig === 'rise' && 'Signal: 7d Rising', S.q.trim() && 'Search: ' + S.q.trim()].filter(Boolean).join(' · ');
       body = '<tr><td colspan="' + (pre ? 12 : 8) + '" class="empty"><b>0 ' + (pre ? 'pre-token protocols' : 'live-token benchmarks') + ' match [' + esc(sum) + '].</b><br>Relax Max Capital, Max Time, Signal, or Category/Chain filters to restore matching candidates.' +
         (!pre && S.cat ? '<br>Valuation fallback note: radar-2 anchors ' + esc(S.cat) + ' across all chains (peer multiple ' + mult(catMult[S.cat]) + ', shrunk toward global median ' + mult(GM) + ').' : '') +
-        '<br>' + (S.chain ? '<button class="ac" data-clr="chain">Clear chain (' + esc(S.chain) + ')</button>' : '') + '<button class="ac" data-clr="all">Reset all filters</button></td></tr>';
+        '<br>' + (S.chain ? '<button class="ac" data-clr="chain">Clear chain (' + esc(S.chain) + ')</button>' : '') + '<button class="ac" data-clr="all">Reset all filters</button>' + (pre ? '<button class="ac" data-clr="all">Back to All targets preset</button>' : '') + '</td></tr>';
     } else if (pre) {
       body = list.map(function (r) {
         return '<tr tabindex="0" data-slug="' + esc(r.slug) + '"><td>' + badge(r.rank) + '</td>' + nm(r, r.watchlist ? '<span class="tag wl">watchlist</span>' : '<span class="tag">early</span>') +
@@ -236,6 +254,8 @@
       if (S.sel[S.mode] === rowKey(tr)) { tr.classList.add('sel'); tr.setAttribute('aria-selected', 'true'); }
       tr.onclick = function () { openRow(tr); }; tr.onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); openRow(tr); } };
     });
+    var qs = enc();
+    history.replaceState(null, '', (pre ? '#board' : '#live') + (qs ? '?' + qs : ''));
     syncCtl();
   }
 
@@ -378,18 +398,21 @@
   var tabs = document.getElementById('tabs');
   tabs.querySelectorAll('button').forEach(function (b) { b.onclick = function () { location.hash = '#' + b.getAttribute('data-tab'); }; });
   function route() {
-    var h = location.hash.replace(/^#/, '') || 'board', tab = h === 'model' || h === 'watch' ? h : 'board';
+    var h = location.hash.replace(/^#/, '') || 'board', qm = /^(board|live)\?(.+)$/.exec(h), tab;
+    if (qm) h = qm[1];
+    tab = h === 'model' || h === 'watch' ? h : 'board';
     if (['board', 'live', 'model', 'watch'].indexOf(h) < 0 && h.indexOf('p/') !== 0) h = 'board';
     tabs.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-selected', b.getAttribute('data-tab') === tab); });
     if (h.indexOf('p/') === 0) { app.className = ''; detailView(decodeURIComponent(h.slice(2))); window.scrollTo(0, 0); }
     else if (h === 'model') { app.className = ''; modelView(); }
     else if (h === 'watch') { watchView(); window.scrollTo(0, 0); }
-    else { S.mode = h === 'live' ? 'live' : 'pre'; boardView(); }
+    else { S.mode = h === 'live' ? 'live' : 'pre'; if (qm) Object.assign(S, dec(qm[2])); boardView(); }
   }
   window.addEventListener('hashchange', route);
   document.addEventListener('keydown', onKey);
   window.addEventListener('resize', syncCtl);
   document.getElementById('sub').textContent = 'Snapshot ' + R.as_of + ' · ' + R.source.split(' ')[0] + ' · model ' + R.model_version + ' · ' + R.board_size + ' pre-token rows';
-  document.getElementById('foot').innerHTML = '<span>Values derive only from the snapshot. No network, no clock. Floor TVL ' + usd(R.floor_usd) + '.</span><span class="kbh"><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Enter</kbd> detail · <kbd>/</kbd> search · <kbd>Esc</kbd> close</span>';
+  document.getElementById('foot').innerHTML = '<span>Values derive only from the snapshot. No network, no clock. Floor TVL ' + usd(R.floor_usd) + '.</span><span class="kbh"><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Enter</kbd> detail · <kbd>/</kbd> search · <kbd>Esc</kbd> close <button class="ghost" id="kb" aria-expanded="false">Keys</button></span><div class="kbh" id="kp" hidden><kbd>↑</kbd><kbd>↓</kbd> or <kbd>j</kbd><kbd>k</kbd> move · <kbd>Enter</kbd> open detail · <kbd>/</kbd> focus search · <kbd>Esc</kbd> back or clear · <kbd>Home</kbd><kbd>End</kbd> first / last</div>';
+  document.getElementById('kb').onclick = function () { var p = document.getElementById('kp'); p.hidden = !p.hidden; this.setAttribute('aria-expanded', String(!p.hidden)); };
   route();
 })();
