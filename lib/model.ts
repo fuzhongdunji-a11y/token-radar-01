@@ -5,6 +5,8 @@ import { COST_RE, farmSteps } from './farm.ts';
 import type { FarmStep } from './farm.ts';
 import { breakdownFor, cohortPositions } from './breakdown.ts';
 import type { Breakdown, CohortPosition } from './breakdown.ts';
+import { watchCards, watchGroups } from './watchlist.ts';
+import type { WatchCard, WatchGroup } from './watchlist.ts';
 import { scenariosFor } from './scenarios.ts';
 import type { PlanScenarios } from './scenarios.ts';
 
@@ -189,14 +191,14 @@ export function driversOf(r: BoardRow, globalMedian: number): Drivers {
 
 // ---- board ----
 export type Cohort = { cat: string; pc: string };
-export type RadarRow = BoardRow & Cohort & { drivers: Drivers; tvl_7d_pct: number | null; econ: Econ; scen: PlanScenarios; bd: { b: Breakdown; c: CohortPosition } };
+export type RadarRow = BoardRow & Cohort & { drivers: Drivers; tvl_7d_pct: number | null; econ: Econ; scen: PlanScenarios; bd: { b: Breakdown; c: CohortPosition }; wc: WatchCard | null };
 export type RadarLive = LiveRow & Cohort & { tvl_7d_pct: number | null };
 export interface Facets { categories: Array<{ id: string; pre: number; live: number; mult: number }>; chains: Array<{ id: string; pre: number; live: number }>; global_mult: number }
 export interface Radar {
   as_of: string; source: string; floor_usd: number; model_version: string; constants: typeof MODEL;
   global_median: number; categories: CategoryStat[];
   watchlist_size: number; board_size: number; extra_size: number; live_size: number;
-  rows: RadarRow[]; live: RadarLive[]; facets: Facets;
+  rows: RadarRow[]; live: RadarLive[]; facets: Facets; watch_groups: WatchGroup[];
 }
 
 // Facets are precomputed so the browser never recomputes counts or peer multiples. The snapshot has no per-chain TVL,
@@ -249,6 +251,12 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     model: f, farm_steps: plans[i]!.map((s) => s.text),
   }));
   const cohorts = cohortPositions(board);
+  // display-only watchlist layer (momentum tiers, category/watchlist ranks, category groups); never written to board.json
+  const watchInputs = board.filter((b) => b.watchlist).map((b) => ({
+    slug: b.slug, rank: b.rank, cat: b.category ?? UNCATEGORIZED, tvl_usd: b.tvl_usd, change_7d: b.change_7d, implied_value_usd: b.implied_value_usd,
+  }));
+  const wcards = watchCards(watchInputs);
+  const wgroups = watchGroups(watchInputs);
   const rows: RadarRow[] = board.map((b, i) => {
     const econ = buildEcon(plans[i]!);
     assertEcon(b.slug, b.farm_steps, econ);
@@ -260,8 +268,12 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     const p = ranked[i]!.p;
     const bd ={ b: breakdownFor(p, snapshot.as_of, table.lookup.get(catOf(p))!, table.global_median), c: cohorts.get(b.slug)! };
     if (bd.b.implied_value_usd !== b.implied_value_usd) throw new Error(`breakdown diverges from board for ${b.slug}`);
-    return { ...b, cat: b.category ?? UNCATEGORIZED, pc: b.chains[0] ?? '—', drivers: driversOf(b, table.global_median), tvl_7d_pct: tvl7d(b), econ, scen, bd };
+    return { ...b, cat: b.category ?? UNCATEGORIZED, pc: b.chains[0] ?? '—', drivers: driversOf(b, table.global_median), tvl_7d_pct: tvl7d(b), econ, scen, bd, wc: wcards.get(b.slug) ?? null };
   });
+  if (wgroups.reduce((s, g) => s + g.count, 0) !== wl.size) throw new Error('watch_groups counts do not sum to watchlist_size');
+  const wranks = rows.filter((r) => r.watchlist).map((r) => r.wc?.watch_rank ?? 0).sort((a, b) => a - b);
+  if (wranks.length !== wl.size || wranks.some((v, i) => v !== i + 1)) throw new Error('watch_rank values are not exactly 1..watchlist_size');
+  if (rows.some((r) => r.watchlist !== (r.wc !== null))) throw new Error('wc must be set on exactly the watchlist rows');
   const live: LiveRow[] = snapshot.protocols.filter(isLive).sort((a, b) => b.mcap_usd! - a.mcap_usd! || bySlug(a, b)).map((p) => ({
     slug: p.slug, name: p.name, category: p.category, chains: p.chains, tvl_usd: p.tvl_usd, change_7d: p.change_7d, mcap_usd: p.mcap_usd!,
     mcap_tvl: p.tvl_usd > 0 ? r4(p.mcap_usd! / p.tvl_usd) : 0, listed_at: p.listed_at, symbol: p.symbol,
@@ -271,7 +283,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     global_median: table.global_median, categories: table.stats,
     watchlist_size: wl.size, board_size: board.length, extra_size: board.filter((r) => !r.watchlist).length, live_size: live.length,
     rows, live: live.map((l) => ({ ...l, cat: l.category ?? UNCATEGORIZED, pc: l.chains[0] ?? '—', tvl_7d_pct: tvl7d(l) })),
-    facets: buildFacets(board, live, table),
+    facets: buildFacets(board, live, table), watch_groups: wgroups,
   };
   return { board, radar };
 }

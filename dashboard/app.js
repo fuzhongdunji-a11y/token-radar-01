@@ -322,6 +322,34 @@
     document.getElementById('bk').onclick = function () { location.hash = '#board'; };
   }
 
+  // ---------- watchlist ----------
+  // Tier bands are display-only thresholds on the snapshot 7d TVL change; tiers, ranks and groups are computed at build time.
+  var TIERS = [['surging', 'Surging'], ['rising', 'Rising'], ['flat', 'Flat'], ['falling', 'Falling'], ['dropping', 'Dropping'], ['unknown', 'No 7d reading']];
+  function watchCard(r) {
+    var w = r.wc, e = r.econ, p = w.pct, bar = none(p) ? '<i class="mb"></i>' : '<i class="mb"><u class="' + (p < 0 ? 'neg' : 'pos') + '" style="width:' + (Math.min(Math.abs(p), 60) / 60 * 50).toFixed(2) + '%"></u></i>';
+    return '<article class="wc" tabindex="0" data-slug="' + esc(r.slug) + '"><div class="wh">' + badge(r.rank) + '<b>' + esc(r.name) + '</b><span class="pill">' + esc(r.cat) + '</span></div>' +
+      '<div class="wv"><b>' + usd(r.implied_value_usd) + '</b><span>implied value</span></div>' +
+      '<div class="wm t-' + w.tier + '"><div class="mn">' + (none(p) ? '—' : fGrow(p, 1)) + '</div><span class="tp">' + esc(w.label) + '</span>' + bar + '</div>' +
+      '<dl class="wk"><dt>TVL</dt><dd>' + usd(r.tvl_usd) + '</dd><dt>Chains</dt><dd>' + chainCell(r) + '</dd><dt>Farm plan</dt><dd>' + cap(e.peak_cap_usd) + ' peak · ' + fee(e.total_fee_usd) + ' fees · ' + e.total_mins + ' min</dd>' +
+      '<dt>In category</dt><dd>#' + w.cat_rank + ' of ' + w.cat_size + '</dd><dt>Watchlist</dt><dd>#' + w.watch_rank + ' of ' + R.watchlist_size + '</dd></dl></article>';
+  }
+  function watchView() {
+    var G = R.watch_groups || [], n = 0, hi = 0, lo = 0;
+    G.forEach(function (g) { n += g.count; hi += g.tiers.surging + g.tiers.rising; lo += g.tiers.falling + g.tiers.dropping; });
+    app.className = '';
+    app.innerHTML = '<section class="wl"><h2>Watchlist · ' + n + ' protocols</h2><p class="ws">' + n + ' watchlist protocols in ' + G.length + ' categories · <b class="up">' + hi + ' rising or better</b> · <b class="down">' + lo + ' falling or worse</b></p>' +
+      '<p class="wn">Momentum bands (display-only, on the snapshot 7d TVL change): ≥10% Surging, ≥2% Rising, ≥−2% Flat, ≥−10% Falling, below that Dropping. Bar half-width = |change|, capped at 60%.</p>' +
+      (G.length ? G.map(function (g) {
+        return '<div class="wg"><div class="wgh"><h3>' + esc(g.category) + '</h3><span>' + g.count + ' · best rank #' + g.best_rank + ' · TVL ' + usd(g.total_tvl_usd) + ' · median 7d ' + (none(g.median_change_7d) ? '—' : fGrow(g.median_change_7d, 1)) + '</span>' +
+          '<span class="wt">' + TIERS.filter(function (t) { return g.tiers[t[0]]; }).map(function (t) { return '<em class="t-' + t[0] + '">' + g.tiers[t[0]] + ' ' + t[1] + '</em>'; }).join('') + '</span></div>' +
+          '<div class="wcs">' + g.slugs.map(function (s) { return bySlug[s] && bySlug[s].wc ? watchCard(bySlug[s]) : ''; }).join('') + '</div></div>';
+      }).join('') : '<div class="empty">No watchlist data.</div>') + '</section>';
+    app.querySelectorAll('.wc').forEach(function (c) {
+      var go = function () { location.hash = '#p/' + c.getAttribute('data-slug'); };
+      c.onclick = go; c.onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); go(); } };
+    });
+  }
+
   // ---------- model ----------
   function modelView() {
     var withPeers = R.categories.filter(function (c) { return c.n > 0; }).sort(function (a, b) { return b.n - a.n || cmpStr(a.category, b.category); }).slice(0, 8);
@@ -350,11 +378,12 @@
   var tabs = document.getElementById('tabs');
   tabs.querySelectorAll('button').forEach(function (b) { b.onclick = function () { location.hash = '#' + b.getAttribute('data-tab'); }; });
   function route() {
-    var h = location.hash.replace(/^#/, '') || 'board', tab = h === 'model' ? 'model' : 'board';
-    if (['board', 'live', 'model'].indexOf(h) < 0 && h.indexOf('p/') !== 0) h = 'board';
+    var h = location.hash.replace(/^#/, '') || 'board', tab = h === 'model' || h === 'watch' ? h : 'board';
+    if (['board', 'live', 'model', 'watch'].indexOf(h) < 0 && h.indexOf('p/') !== 0) h = 'board';
     tabs.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-selected', b.getAttribute('data-tab') === tab); });
     if (h.indexOf('p/') === 0) { app.className = ''; detailView(decodeURIComponent(h.slice(2))); window.scrollTo(0, 0); }
     else if (h === 'model') { app.className = ''; modelView(); }
+    else if (h === 'watch') { watchView(); window.scrollTo(0, 0); }
     else { S.mode = h === 'live' ? 'live' : 'pre'; boardView(); }
   }
   window.addEventListener('hashchange', route);
