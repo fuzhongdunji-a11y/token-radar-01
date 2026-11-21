@@ -4,6 +4,7 @@
 // Every step is built together with its numbers {cap, additive, fee, mins}; the closing "Cost: ... Time: ..." sentence is
 // printed from those numbers, so the execution ledger (lib/model.ts buildEcon) binds to parameters, never to parsed prose.
 import type { Factors, Protocol } from './model.ts';
+import { basisSentence } from './farmdetail.ts';
 
 export type Archetype = 'lending' | 'dex' | 'yield' | 'deriv' | 'bridge' | 'market';
 export interface FarmStep { text: string; cap: number; additive: boolean; fee: number; mins: number }
@@ -197,14 +198,14 @@ export function farmSteps(p: Protocol, f: Factors, implied: number): FarmStep[] 
     ({ text: `${body} ${costLine(capUsd, cents(fee), mins)}`, cap: capUsd, additive, fee: cents(fee), mins });
   const [openText, openCap, openAdd] = pick(OPENING[arch], p.slug, 'open')(c);
   return [
-    step(`Scope ${p.name} (${p.category ?? 'uncategorised'}): ${fmtM(p.tvl_usd)} TVL on ${chain}, ${trendTxt}, ${ageTxt}. Model value ${fmtM(implied)}. Read the docs, the audit page and the last 20 transactions, and confirm the app is live and that no token exists yet before spending anything.`, 0, 0, 20),
-    step(`Fund a fresh ${chain} wallet with $${cap} of stable capital plus about $${gas} of native gas for ${p.name}. Keep it separate from main funds so the activity stays attributable and a bad approval cannot reach other assets. The principal is recoverable.`, cap + gas, 0, 15),
+    step(`Scope ${p.name} (${p.category ?? 'uncategorised'}): ${fmtM(p.tvl_usd)} TVL on ${chain}, ${trendTxt}, ${ageTxt}. Model value ${fmtM(implied)}. Read the docs, the audit page and the last 20 transactions, and confirm the app is live and that no token exists yet before spending anything. ${basisSentence({ chain, amount: 0, cap, mins: 20, partA: 12, labelA: 'reading the docs and audit page', partB: 8, labelB: 'checking recent transactions' })}`, 0, 0, 20),
+    step(`Fund a fresh ${chain} wallet with $${cap} of stable capital plus about $${gas} of native gas for ${p.name}. Keep it separate from main funds so the activity stays attributable and a bad approval cannot reach other assets. The principal is recoverable. ${basisSentence({ chain, amount: cap, cap, mins: 15, partA: 5, labelA: 'setting up the fresh wallet', partB: 10, labelB: 'funding it and confirming the balance' })}`, cap + gas, 0, 15),
     step(openText, openCap, cents(gas * 0.5), mOpen, openAdd === true),
     step(`${FIRST[arch](c)}${FIRST_TAIL}`, slice, cents(gas * 0.4), mFirst),
     step(`Add a second, different action on ${p.name} using $${slice2}, such as a withdrawal and re-entry, so the wallet shows more than one type of activity, not only ${REPEAT_VERB[arch]}. Keep about $${r(reserve / 2)} unspent as a gas reserve for roughly ${r(reserve / 2 / gas)} further transactions on ${chain}, and log the date.`, slice2, cents(gas * 0.5), mSecond),
-    step(`Repeat ${REPEAT_VERB[arch]} on ${p.name} weekly: 3 rounds of $${roundCap} or less, spaced 7 days apart and ${mRound} min each, to build a steady record rather than one burst. Skip a round if gas on ${chain} exceeds $${gas * 2}, and use a different weekday each time so timestamps do not cluster.`, roundCap, cents(gas * 1.2), mRound * 3),
+    step(`Repeat ${REPEAT_VERB[arch]} on ${p.name} weekly: 3 rounds of $${roundCap} or less, spaced 7 days apart and ${mRound} min each, to build a steady record rather than one burst. Skip a round if gas on ${chain} exceeds $${gas * 2}, and use a different weekday each time so timestamps do not cluster. ${basisSentence({ chain, amount: roundCap, cap, mins: mRound * 3, partA: mRound, labelA: 'one repeat round', partB: mRound * 2, labelB: 'the other two rounds' })}`, roundCap, cents(gas * 1.2), mRound * 3),
     step(pick(MONITOR[arch], p.slug, 'mon')(c), 0, cents(gas * 0.3), mMon),
-    step(`Keep the position open for ${hold} days (the hold for ${f.age_days === null ? 'an unknown-age' : `${f.age_days}-day-old`} protocols). Check at day ${Math.max(7, r(hold / 2))} and exit if TVL drops below ${fmtM(p.tvl_usd * 0.6)}. Do not top up during the hold, since extra deposits blur the entry record. The $${cap} stays locked, so the opportunity cost is the real expense; active time is one 5-minute check.`, 0, 0, 5),
+    step(`Keep the position open for ${hold} days (the hold for ${f.age_days === null ? 'an unknown-age' : `${f.age_days}-day-old`} protocols). Check at day ${Math.max(7, r(hold / 2))} and exit if TVL drops below ${fmtM(p.tvl_usd * 0.6)}. Do not top up during the hold, since extra deposits blur the entry record. The $${cap} stays locked, so the opportunity cost is the real expense; active time is one 5-minute check. ${basisSentence({ chain, amount: cap, cap, mins: 5, partA: 5, labelA: 'one mid-hold check', partB: 0, labelB: '' })}`, 0, 0, 5),
     step(pick(RECORD, p.slug, 'rec')(c), 0, 0, 10),
     step(pick(EXIT[arch], p.slug, 'exit')(c), 0, 0, 5),
     step(`Wrap up ${p.name}: withdraw everything, record the cost basis (about $${r(gas * 3)} gas across the whole plan) and screenshot the wallet's history. Watch the protocol's announcements for a points programme or claim page, and revoke the approvals you granted.`, 0, gas, 15),
