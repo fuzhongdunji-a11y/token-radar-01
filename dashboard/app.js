@@ -315,7 +315,7 @@
 
   function detailView(slug) {
     var r = bySlug[slug];
-    if (!r) { app.innerHTML = '<div class="empty">Unknown protocol. <a href="#board">Back to board</a></div>'; return; }
+    if (!r) { app.innerHTML = '<div class="empty">Unknown protocol. <a href="#board">Back to radar</a></div>'; return; }
     var m = r.model, s = catStat[r.cat];
     var product = r.tvl_usd * m.category_multiple * m.growth_multiplier * m.maturity_multiplier * m.chain_multiplier;
     var catNote = s.n === 0 ? 'no live-token peers: global median ' + s.multiple.toFixed(3) :
